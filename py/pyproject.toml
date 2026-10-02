@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "store-mcp-py"
+version = "0.1.0"
+description = "MCP (Model Context Protocol) adapter that auto-generates tool surfaces for py-store schemas (schema-driven CRUD + sandboxed GQL query + optional ask), stdio transport"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["py-store", "storepy", "mcp", "model-context-protocol", "crud", "gql", "ai"]
+dependencies = ["mcp>=2.2,<3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["store_mcp*"]
