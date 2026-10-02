@@ -26,9 +26,9 @@
 
 ## server API
 
-- node：`exportTools(store, opts) -> { tools }`（纯构建，零 SDK 依赖，永远可用）；`createStdioServer(store, opts) -> Promise<{ server, tools }>`（stdio 阻塞运行）。
-- py：`export_tools(store, opts) -> list`；`run_stdio(store, opts)`（anyio 阻塞运行）。
-- `opts`（双端同形）：`name?`（server 名，缺省 `store-mcp`）、`version?`、`llm?`（注册名或 `async (messages) => str`）、`ctx?`（`ask` 的服务端用户上下文 `{userId, roles}`）、`resources?`（自定义工具来源模型子集）。
+- node：`exportTools(store, opts) -> { tools }`（纯构建，零 SDK 依赖，永远可用）；`createServer(store, opts) -> Promise<{ server, tools }>`（装配全部守卫，不绑传输——测试经 InMemoryTransport 直连，v1 HTTP 复用）；`createStdioServer(store, opts)`（= createServer + StdioServerTransport，stdio 阻塞运行）。
+- py：`export_tools(store, opts) -> list`；`create_server(store, opts) -> {server, tools}`（同构装配）；`run_stdio(store, opts)`（create_server + stdio，anyio 阻塞运行）。
+- `opts`（双端同形）：`name?`（server 名，缺省 `store-mcp`）、`version?`、`llm?`（注册名或 `async (messages) => str`）、`ctx?`（`ask` 的服务端用户上下文 `{userId, roles}`）、`resources?`（自定义工具来源模型子集）、`contextProvider?`（每调用钩子，见 02）、`text2query?`（query 工具的档位上下文，**形态双端各随宿主**：node 为回调包裹 `fn(async fn) -> Promise`（nodejs-store 导出形态，皮肤 `t2q(run)`）；py 为 sync contextmanager 工厂（`@contextmanager def text2query(): yield`，py_store.schema 导出形态，皮肤 `with t2q(): await run()`）——缺省从宿主 require/import 取，两端皆不可得 ⇒ 装配期抛错带指引）、`hostAsk?` / `host_ask?`（宿主 ask 绑定；缺省从宿主 require/import 构造，测试注入 mock 用）、`schema_module?`（py 专用：元数据 provider，缺省 duck 探测 store.list/get → py_store.schema）。
 - 承载依赖缺失（node 缺 `@modelcontextprotocol/sdk` / py 缺 `mcp`）⇒ `createStdioServer` / `run_stdio` 抛错并带安装指引；`exportTools` / `export_tools` 不依赖 SDK。
 
 ## 启用守卫（零意外工具，对齐 store-gateway「enabled 缺省 false」）

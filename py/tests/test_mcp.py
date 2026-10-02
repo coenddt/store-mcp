@@ -7,6 +7,7 @@ PaginatedRequestParams），传整 Request 模型会拿 params dict 去验 id/js
 """
 
 import json
+from contextlib import contextmanager
 
 import anyio
 import pytest
@@ -22,9 +23,7 @@ USER_PROJ = ' { name, full }'
 async def make_session(store, **opts):
     """起 server（后台任务组）+ 已 initialize 的 ClientSession；用 async with 组合。"""
     if 'text2query' not in opts:
-        async def passthrough(fn):
-            return await fn()
-        opts['text2query'] = passthrough
+        opts['text2query'] = _passthrough_profile
 
     app = create_server(store, opts)['server']
     streams = create_client_server_memory_streams()
@@ -81,11 +80,8 @@ async def test_ask_tool_registered_only_with_llm():
             events = []
         return R()
 
-    async def passthrough(fn):
-        return await fn()
-
     async with await make_session(store, llm='gpt', ctx={'userId': 'u1', 'roles': ['admin']},
-                                  host_ask=host_ask, text2query=passthrough) as s:
+                                  host_ask=host_ask) as s:
         tools = (await s.list_tools()).tools
         assert any(t.name == 'ask' for t in tools)
 
@@ -167,9 +163,10 @@ async def test_query_runs_in_text2query_profile():
     store, calls = mock_store()
     entered = []
 
-    async def t2q(fn):
+    @contextmanager
+    def t2q():
         entered.append(True)
-        return await fn()
+        yield
 
     async with await make_session(store, text2query=t2q) as s:
         r = await s.call_tool('query', {'gql': 'User -> { name }', 'params': {}})
@@ -200,10 +197,8 @@ async def test_err_prefix_passthrough():
         raise ValueError('ERR_TEXT2QUERY:深度超限')
 
     store.query = boom
-    async def passthrough(fn):
-        return await fn()
 
-    async with await make_session(store, text2query=passthrough) as s:
+    async with await make_session(store) as s:
         r = await s.call_tool('query', {'gql': 'User'})
         assert r.is_error
         err = parse(r)
@@ -268,3 +263,30 @@ def test_error_of_known_names():
         pass
     assert error_of(ProfileViolation('x'))['code'] == 'profileBlocked'
     assert error_of(ValueError('boom')) == {'code': 'planError', 'message': 'boom'}
+
+
+@contextmanager
+def _passthrough_profile():
+    """mock 档位上下文——与 py_store.schema.text2query 逐字同形（@contextmanager 工厂）。"""
+    yield
+
+
+@pytest.mark.anyio
+async def test_query_host_profile_actually_enters():
+    """宿主兜底回归：opts 不注入时从 py_store.schema 取得真实 text2query
+    （@contextmanager 工厂），query 执行期档位必须**真实进入**——mock store 内
+    断言 core 判决面 get_profile()=='text2query'（此前 mock 走 async 回调形态，
+    掩盖了 `with` 包裹缺失的缺陷，本用例堵住该回归）。"""
+    from py_store.schema import get_profile
+    store, calls = mock_store()
+
+    async def spy_query(q, params=None, route_override=None):
+        calls.append(['query', q, params, get_profile()])
+        return [{'profile': get_profile()}]
+
+    store.query = spy_query
+    async with await make_session(store, text2query=False) as s:  # False ⇒ 走宿主兜底 import
+        r = await s.call_tool('query', {'gql': 'User -> { name }'}, )
+        assert not r.is_error, parse(r)
+        assert calls[0][3] == 'text2query', 'query 必须真实进入 text2query 档'
+        assert parse(r) == [{'profile': 'text2query'}]

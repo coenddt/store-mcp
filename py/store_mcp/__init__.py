@@ -206,8 +206,13 @@ def _query_handler(store, opts):
             # routeOverride 恒 None（D5/CWE-639）
             return await store.query(gql, args.get('params'), None)
 
+        # 形态契约（spec/00）：与宿主逐字同形的 sync contextmanager 工厂——
+        # py_store.schema.text2query 即 `@contextmanager def text2query(): ...`
+        # （实为 `with t2q(): await run()`；回调/awaitable 形态一律不收，守卫按 callable 放行后
+        #  在此处以 with 进入——非 contextmanager 形态会在此 TypeError 显式暴露，禁静默降级）
         if callable(t2q):
-            return await t2q(run)
+            with t2q():
+                return await run()
         return await run()  # 测试注入路径之外不可达：装配期已守卫
     return handler
 

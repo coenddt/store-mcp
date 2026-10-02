@@ -2,6 +2,7 @@
 断言值逐字取自 JSON，本文件零内联期望（改断言先改 cases.json）。"""
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 import anyio
@@ -90,9 +91,10 @@ async def test_query_profile_passthrough():
     store, calls = mock_store()
     entered = []
 
-    async def t2q(fn):
+    @contextmanager
+    def t2q():
         entered.append(True)
-        return await fn()
+        yield
 
     async with await make_session(store, text2query=t2q) as s:
         r = await s.call_tool(cases['query']['tool'], cases['query']['args'])
@@ -113,10 +115,7 @@ async def test_error_mappings():
 
     store.query = boom
 
-    async def passthrough(fn):
-        return await fn()
-
-    async with await make_session(store, text2query=passthrough) as s:
+    async with await make_session(store) as s:
         r = await s.call_tool(cases['query']['tool'], cases['query']['args'])
         assert r.is_error
         err = parse(r)
