@@ -10,44 +10,11 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 const index = require('../src/index.js');
+const { mockStore } = require('./mock-store.js');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { ListToolsRequestSchema, CallToolRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
 const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
-
-// ── mock store（spec/00 端口契约的最小实现）──
-
-function mockStore() {
-  const docs = new Map([
-    ['u1', { _id: 'u1', name: 'Alice' }],
-    ['o1', { _id: 'o1', total: 9 }],
-  ]);
-  const calls = [];
-  const schemas = {
-    User: { fields: { name: {} }, computes: { full: {} }, idField: '_id', description: '用户' },
-    Order: { fields: { total: {} }, computes: {}, idField: '_id' },
-    OrderDeleted: { fields: { total: {} }, computes: {}, idField: '_id' },
-    SecretHidden: { fields: { s: {} }, computes: {}, 'x-mcp': { hidden: true } },
-  };
-  return {
-    calls,
-    docs,
-    list: () => Object.keys(schemas),
-    get: (n) => schemas[n] || null,
-    query: async (q, params) => { calls.push(['query', q, params]); return [{ _id: 'u1' }]; },
-    queryOne: async (q, params) => {
-      calls.push(['queryOne', q, params]);
-      return docs.get(params.c0[idFieldOf(q)]) || null;
-    },
-    insert: async (name, body) => { calls.push(['insert', name, body]); return { _id: 'n1', ...body }; },
-    update: async (name, loc, set) => { calls.push(['update', name, loc, set]); return 1; },
-    remove: async (name, loc) => { calls.push(['remove', name, loc]); return 1; },
-    setContext: async (c) => { calls.push(['setContext', c]); },
-  };
-}
-
-// 从 queryOne 的 GQL 里解析不出 idField，mock 直接按 _id 取（get_User 场景 idField 恒 _id）
-function idFieldOf() { return '_id'; }
 
 // ── 测试专用装配：低层 Server + InMemoryTransport（不占 stdio）──
 

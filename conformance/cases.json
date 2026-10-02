@@ -1,0 +1,72 @@
+{
+  "comment": "双端一致性用例——同一份 JSON，node:test 与 pytest 各自加载执行，断言值逐字一致。mock schema 见 mock-store 模块（双端同形）：User(fields{name}+computes{full}+idField _id+description 用户) / Order(fields{total}) / OrderDeleted / SecretHidden(x-mcp hidden)。op 名双端不同处以 {node,py} 对象表达。",
+  "surface": {
+    "models": ["User", "Order", "OrderDeleted", "SecretHidden"],
+    "expected_tool_names": ["create_Order", "create_User", "delete_Order", "delete_User", "get_Order", "get_User", "list_Order", "list_User", "query", "update_Order", "update_User"],
+    "expected_count": 11,
+    "user_projection": " { name, full }",
+    "id_field": "_id"
+  },
+  "get": {
+    "tool": "get_User",
+    "args": { "id": "u1" },
+    "expected_op": { "node": "queryOne", "py": "query_one" },
+    "expected_q": "User($condition: @c0) { name, full }",
+    "expected_params": { "c0": { "_id": "u1" } },
+    "hit_data": { "_id": "u1", "name": "Alice" },
+    "miss_args": { "id": "nope" },
+    "miss_code": "notFound"
+  },
+  "list": {
+    "tool": "list_User",
+    "empty_q_op": { "node": "query", "py": "query" },
+    "empty_q_expected": "User { name, full }",
+    "with_q_args": { "q": "($condition: @c1) -> { name }", "params": { "c1": { "name": "A" } } },
+    "with_q_expected_q": "User($condition: @c1) -> { name }",
+    "with_q_expected_params": { "c1": { "name": "A" } }
+  },
+  "create": {
+    "tool": "create_User",
+    "args": { "body": { "name": "Bob" } },
+    "expected_op": { "node": "insert", "py": "insert" },
+    "expected_q": "User",
+    "expected_params": { "name": "Bob" },
+    "bad_args": { "body": [1, 2] },
+    "bad_code": "invalidBody"
+  },
+  "update": {
+    "tool": "update_User",
+    "args": { "id": "u1", "set": { "name": "A2" } },
+    "expected_op": { "node": "update", "py": "update" },
+    "expected_q": "User",
+    "expected_params": { "_id": "u1" },
+    "expected_set": { "name": "A2" }
+  },
+  "remove": {
+    "tool": "delete_User",
+    "args": { "id": "u1" },
+    "expected_op": { "node": "remove", "py": "remove" },
+    "expected_q": "User",
+    "expected_params": { "_id": "u1" }
+  },
+  "query": {
+    "tool": "query",
+    "args": { "gql": "User -> { name }", "params": {} },
+    "expected_op": { "node": "query", "py": "query" },
+    "expected_q": "User -> { name }",
+    "expected_params": {}
+  },
+  "errors": {
+    "stable_prefix": "ERR_TEXT2QUERY:",
+    "plan_error_code": "planError",
+    "permission_exception": "PermissionError",
+    "permission_code": "permissionDenied",
+    "profile_exception": "ProfileViolation",
+    "profile_code": "profileBlocked",
+    "profile_blocked_event_type": "profile_blocked"
+  },
+  "archive_filter": {
+    "input": ["User", "OrderDeleted", "Order", "StandaloneDeleted"],
+    "expected": ["User", "Order", "StandaloneDeleted"]
+  }
+}
