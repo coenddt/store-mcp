@@ -18,6 +18,10 @@
     "ai"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/coenddt/store-mcp.git"
+  },
   "engines": {
     "node": ">=18"
   },
