@@ -87,6 +87,12 @@ const ASK_TOOL = {
   inputSchema: obj({ question: { type: 'string', description: '自然语言问题' } }, ['question']),
 };
 
+const DESCRIBE_TOOL = {
+  name: 'describe_schemas',
+  description: '列出可用数据模型及其字段/关系/计算列（权限过滤后的紧凑 JSON）。翻译 GQL 前先调用本工具获取 schema；无权限上下文时仅返回模型名与字段名',
+  inputSchema: obj({}, []),
+};
+
 /**
  * 收集工具面（归档过滤 + x-mcp 注记 + ask 启用守卫）。
  * @returns {{tools: object[], handlers: Map<string, Function>}}
@@ -115,6 +121,10 @@ function buildSurface(store, opts = {}) {
   // spec/02：query 工具强制 text2query 档 —— 档位上下文取用顺序见文件头
   tools.push(QUERY_TOOL);
   handlers.set('query', queryHandler(store, opts));
+
+  // spec/01：describe_schemas —— AI 自主翻译 GQL 前的 schema 出口（零入参；ctx 走 opts，不进 inputSchema）
+  tools.push(DESCRIBE_TOOL);
+  handlers.set('describe_schemas', describeHandler(store, opts));
 
   // spec/01：ask 仅 opts.llm 提供时注册；配 llm 缺 ctx 装配期抛错（fail-secure）
   if (opts.llm !== undefined && opts.llm !== null) {
@@ -168,6 +178,15 @@ function queryHandler(store, opts) {
     const run = () => store.query(args.gql, args.params, null); // routeOverride 恒 null（D5/CWE-639）
     if (typeof t2q === 'function') return t2q(run);
     return run(); // 测试注入路径之外不可达：装配期已守卫
+  };
+}
+
+function describeHandler(store, opts) {
+  return async () => {
+    if (typeof store.describeForAi !== 'function') {
+      throw new SkinError('planError', 'store 未提供 describeForAi（需提供该门面的 nodejs-store 宿主）');
+    }
+    return store.describeForAi(opts.ctx === undefined ? null : opts.ctx);
   };
 }
 
