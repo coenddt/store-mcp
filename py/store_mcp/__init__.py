@@ -121,6 +121,13 @@ QUERY_TOOL = {
     'inputSchema': _obj({'gql': {'type': 'string'}, 'params': {'type': 'object'}}, ['gql']),
 }
 
+DESCRIBE_TOOL = {
+    'name': 'describe_schemas',
+    'description': ('列出可用数据模型及其字段/关系/计算列（权限过滤后的紧凑 JSON）。'
+                    '翻译 GQL 前先调用本工具获取 schema；无权限上下文时仅返回模型名与字段名'),
+    'inputSchema': _obj({}, []),
+}
+
 ASK_TOOL = {
     'name': 'ask',
     'description': ('AI 问数（只读）：自然语言 → 宿主 ask() 编排（LLM 翻译 → text2query 档校验执行 → '
@@ -153,6 +160,10 @@ def build_surface(store: Any, opts: dict):
     # spec/02：query 工具强制 text2query 档 —— 档位上下文取用顺序见模块头
     tools.append(dict(QUERY_TOOL))
     handlers['query'] = _query_handler(store, opts)
+
+    # spec/01：describe_schemas —— AI 自主翻译 GQL 前的 schema 出口（零入参；ctx 走 opts，不进 inputSchema）
+    tools.append(dict(DESCRIBE_TOOL))
+    handlers['describe_schemas'] = _describe_handler(store, opts)
 
     # spec/01：ask 仅 opts.llm 提供时注册；配 llm 缺 ctx 装配期抛错（fail-secure）
     if opts.get('llm') is not None:
@@ -214,6 +225,15 @@ def _query_handler(store, opts):
             with t2q():
                 return await run()
         return await run()  # 测试注入路径之外不可达：装配期已守卫
+    return handler
+
+
+def _describe_handler(store, opts):
+    async def handler(args):
+        fn = getattr(store, 'describe_for_ai', None)
+        if not callable(fn):
+            raise SkinError('planError', 'store 未提供 describe_for_ai（需提供该门面的 py-store 宿主）')
+        return fn(opts.get('ctx'))
     return handler
 
 
