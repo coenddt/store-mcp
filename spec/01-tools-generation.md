@@ -12,6 +12,7 @@
 | `update_X` | `{ id: string, set: object }`（均 required） | 按 idField 定位后部分更新 |
 | `delete_X` | `{ id: string }`（required） | 按 idField 定位删除 |
 | `query`（全局一个，非 per-model） | `{ gql: string, params?: object }`（gql required） | AI 自由读出口；**强制 text2query 档**执行（见 02） |
+| `describe_schemas`（全局一个，非 per-model） | `{}`（无 required） | 列出可用模型及其字段/关系/计算列（权限过滤后的紧凑 JSON 数组，透传宿主 `describe_for_ai`）。**ctx 由部署侧经 `opts.ctx` 提供（受信参数，不进 inputSchema）**；`opts.ctx` 缺省 ⇒ 宿主既有降级摘要（仅模型名 + 字段名，防探针）。AI 客户端翻译 GQL 前应优先调用本工具获取 schema |
 | `ask`（仅 `opts.llm` 提供时注册） | `{ question: string }`（required） | 透传宿主 `ask(question, { llm, ctx: opts.ctx })`；护栏全在宿主（text2query 档、只读、回喂重试、轨迹），皮肤零新增语义 |
 
 - 命名对齐 store-graphql 生成面（`get_X` / `list_X` / `create_X` / `update_X` / `delete_X`）。

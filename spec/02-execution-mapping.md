@@ -14,6 +14,7 @@
 | `update_User` | `id`、`set` | `store.update('User', { _id: id }, set)` | store.update 返回值原样 JSON（对齐 REST PATCH，不做二次回读） |
 | `delete_User` | `id` | `store.remove('User', { _id: id })` | store.remove 返回值原样 JSON |
 | `query` | `gql`、`params` | 见「query 工具档位契约」 | 数组 JSON |
+| `describe_schemas` | 无 | node `store.describeForAi(opts.ctx ?? null)` / py `store.describe_for_ai(opts.ctx)` | 数组 JSON |
 
 ## 入参解析规则
 
@@ -35,6 +36,8 @@ MCP inputSchema 已在协议层做类型预检（string/object required 由 SDK 
 - 依据：text2query 档是 core 为「不可信方产出 GQL」设计的沙箱（硬限 1000 行 / 深度 3 / 禁 route_override / 强制用户上下文——`AI能力接入设计-L1问数档.md` A1–A8）。MCP 的工具调用方正是不可信方（AI 客户端），档位对位是语义继承而非发明。
 - 强制用户上下文 ⇒ `query` 工具要求 `opts.ctx`？**不**：`query` 沿用「当前进程上下文」语义——core 档位门禁无 ctx 即拒（fail-secure），皮肤不额外注入 `opts.ctx`；部署方要让 `query` 可用，经 `opts.contextProvider`（见下）或宿主 `setContext` 自行供 ctx。皮肤只负责档位包裹，不做 ctx 伪造。
 - `routeOverride` 恒为 `null`（第三参数硬编码，对齐宿主 ask 先例 D5/CWE-639）。
+
+`describe_schemas` 是只读元数据出口，**不强制档位**（不进入数据查询规划）；其可见范围由 `opts.ctx` 决定。
 
 ## ask 工具透传契约
 
