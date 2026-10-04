@@ -1,6 +1,10 @@
 """测试共享 mock store —— spec/00 端口契约的最小实现（conformance/cases.json 的
 schema 假设与此处逐条对应；node 侧 test/mock-store.js 同形）。"""
 
+# describe_schemas 摘要桩（双端同一份字面量）：带 ctx 为完整摘要，无 ctx 为降级裸摘要
+MOCK_DIGEST_FULL = [{'name': 'User', 'fields': {'name': 'string', 'age': 'int'}}]
+MOCK_DIGEST_BARE = [{'name': 'User', 'fields': ['name', 'age']}]
+
 
 def mock_store():
     docs = {'u1': {'_id': 'u1', 'name': 'Alice'}}
@@ -44,5 +48,9 @@ def mock_store():
         @staticmethod
         async def set_context(ctx):
             calls.append(['set_context', ctx])
+
+        @staticmethod
+        def describe_for_ai(ctx=None):
+            return MOCK_DIGEST_FULL if ctx else MOCK_DIGEST_BARE
 
     return Store(), calls

@@ -14,7 +14,7 @@ import pytest
 from mcp import ClientSession
 from mcp.shared.memory import create_client_server_memory_streams
 
-from mock_store import mock_store
+from mock_store import mock_store, MOCK_DIGEST_FULL, MOCK_DIGEST_BARE
 from store_mcp import (create_server, error_of, export_tools, filter_archived)
 
 USER_PROJ = ' { name, full }'
@@ -64,9 +64,9 @@ async def test_tools_list():
         names = sorted(t.name for t in tools)
         assert names == sorted([
             'create_Order', 'create_User', 'delete_Order', 'delete_User',
-            'get_Order', 'get_User', 'list_Order', 'list_User',
+            'describe_schemas', 'get_Order', 'get_User', 'list_Order', 'list_User',
             'query', 'update_Order', 'update_User'])
-        assert len(tools) == 11
+        assert len(tools) == 12
 
 
 @pytest.mark.anyio
@@ -187,6 +187,23 @@ async def test_text2query_defaults_to_host():
     assert any(t['name'] == 'query' for t in r['tools'])
 
 
+# ── 5b. describe_schemas：ctx 走 opts，摘要原样透传 ──
+
+@pytest.mark.anyio
+async def test_describe_schemas_ctx_switch():
+    store, _ = mock_store()
+    async with await make_session(store, ctx={'userId': 'u1', 'roles': []}) as s:
+        full = await s.call_tool('describe_schemas', {})
+        assert not full.is_error
+        assert parse(full) == MOCK_DIGEST_FULL
+
+    store2, _ = mock_store()
+    async with await make_session(store2) as s:
+        r = await s.call_tool('describe_schemas', {})
+        assert not r.is_error
+        assert parse(r) == MOCK_DIGEST_BARE
+
+
 # ── 6. 错误透传 ──
 
 @pytest.mark.anyio
@@ -248,7 +265,7 @@ async def test_export_tools_matches_surface():
         return R()
     tools = export_tools(store, {'llm': 'gpt', 'ctx': {'userId': 'u1'}, 'host_ask': host_ask})
     assert sum(1 for t in tools if t['name'] == 'ask') == 1
-    assert len(tools) == 12  # 2 模型 × 5 + query + ask
+    assert len(tools) == 13  # 2 模型 × 5 + query + describe_schemas + ask
 
 
 # ── 9. 纯函数：filter_archived / error_of ──

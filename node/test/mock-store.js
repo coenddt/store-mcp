@@ -5,6 +5,10 @@
  * schema 假设与此处逐条对应；py 侧 tests/mock_store.py 同形）。
  */
 
+// describe_schemas 摘要桩（双端同一份字面量）：带 ctx 为完整摘要，无 ctx 为降级裸摘要
+const MOCK_DIGEST_FULL = [{ name: 'User', fields: { name: 'string', age: 'int' } }];
+const MOCK_DIGEST_BARE = [{ name: 'User', fields: ['name', 'age'] }];
+
 function mockStore() {
   const docs = new Map([
     ['u1', { _id: 'u1', name: 'Alice' }],
@@ -31,7 +35,8 @@ function mockStore() {
     update: async (name, loc, set) => { calls.push(['update', name, loc, set]); return 1; },
     remove: async (name, loc) => { calls.push(['remove', name, loc]); return 1; },
     setContext: async (c) => { calls.push(['setContext', c]); },
+    describeForAi: (ctx) => (ctx ? MOCK_DIGEST_FULL : MOCK_DIGEST_BARE),
   };
 }
 
-module.exports = { mockStore };
+module.exports = { mockStore, MOCK_DIGEST_FULL, MOCK_DIGEST_BARE };

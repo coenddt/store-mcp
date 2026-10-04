@@ -10,7 +10,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 const index = require('../src/index.js');
-const { mockStore } = require('./mock-store.js');
+const { mockStore, MOCK_DIGEST_FULL, MOCK_DIGEST_BARE } = require('./mock-store.js');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { ListToolsRequestSchema, CallToolRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
@@ -32,16 +32,16 @@ const USER_PROJ = ' { name, full }';
 
 // ── 1. 工具清单：归档过滤 + x-mcp hidden + query ──
 
-test('tools/list: 2 模型 × 5 + query，归档表与 hidden 模型不出', async () => {
+test('tools/list: 2 模型 × 5 + query + describe_schemas，归档表与 hidden 模型不出', async () => {
   const { client } = await start(mockStore());
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort();
   assert.deepStrictEqual(names, [
     'create_Order', 'create_User', 'delete_Order', 'delete_User',
-    'get_Order', 'get_User', 'list_Order', 'list_User',
+    'describe_schemas', 'get_Order', 'get_User', 'list_Order', 'list_User',
     'query', 'update_Order', 'update_User',
   ]);
-  assert.strictEqual(tools.length, 11);
+  assert.strictEqual(tools.length, 12);
 });
 
 test('ask 工具：配 llm + ctx 才注册', async () => {
@@ -135,6 +135,20 @@ test('text2query 缺失（注入与宿主皆无）⇒ 装配期抛错带指引',
   await assert.rejects(() => index.createServer(mockStore()), /text2query 档/);
 });
 
+// ── 5b. describe_schemas：ctx 走 opts，摘要原样透传 ──
+
+test('describe_schemas: 带 opts.ctx ⇒ FULL 摘要；无 ctx ⇒ 降级裸摘要（透传宿主）', async () => {
+  const withCtx = await start(mockStore(), { ctx: { userId: 'u1', roles: [] } });
+  const full = await withCtx.client.callTool({ name: 'describe_schemas', arguments: {} });
+  assert.strictEqual(full.isError, undefined);
+  assert.deepStrictEqual(JSON.parse(full.content[0].text), MOCK_DIGEST_FULL);
+
+  const bare = await start(mockStore());
+  const r = await bare.client.callTool({ name: 'describe_schemas', arguments: {} });
+  assert.strictEqual(r.isError, undefined);
+  assert.deepStrictEqual(JSON.parse(r.content[0].text), MOCK_DIGEST_BARE);
+});
+
 // ── 6. 错误透传 ──
 
 test('ERR_ 稳定前缀原样透传（禁改写禁摘要，spec/03）', async () => {
@@ -174,7 +188,7 @@ test('exportTools: 与 createServer 的 tools 清单一致（同一 buildSurface
     llm: 'gpt', ctx: { userId: 'u1', roles: [] }, hostAsk: async () => ({}),
   });
   assert.strictEqual(tools.filter((t) => t.name === 'ask').length, 1);
-  assert.strictEqual(tools.length, 12); // 2 模型 × 5 + query + ask
+  assert.strictEqual(tools.length, 13); // 2 模型 × 5 + query + describe_schemas + ask
 });
 
 // ── 9. 纯函数：filterArchived（conformance 前置）──
