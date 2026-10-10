@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "store-mcp-py"
-version = "0.1.1"
+version = "0.2.0"
 description = "MCP (Model Context Protocol) adapter that auto-generates tool surfaces for py-store schemas (schema-driven CRUD + sandboxed GQL query + optional ask), stdio transport"
 requires-python = ">=3.10"
 license = { text = "MIT" }
