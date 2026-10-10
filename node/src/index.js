@@ -54,6 +54,9 @@ function errorOf(e) {
   if (e && e.name === 'SkinError') return { code: e.code, message: e.message };
   if (e && e.name === 'AskExhausted') return { code: 'askExhausted', message: String(e.message) };
   if (e && e.name === 'PermissionError') return { code: 'permissionDenied', message: String(e.message) };
+  if (e && (e.name === 'NoContextError' || e.code === 'no_context')) {
+    return { code: 'noContext', message: String(e.message) };
+  }
   if (e && e.name === 'ProfileViolation') return { code: 'profileBlocked', message: String(e.message) };
   return { code: 'planError', message: String((e && e.message) || e) };
 }

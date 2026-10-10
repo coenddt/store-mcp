@@ -10,11 +10,12 @@ tool 执行异常按序判定，命中即止：
 |---|---|---|---|
 | 1 | 宿主反馈事件 `profile_blocked`（core 未拦住本身就是告警信号） | `profileBlocked` | 事件 message 原样 |
 | 2 | 宿主 `PermissionError` | `permissionDenied` | str(e) 原样 |
-| 3 | 宿主 `ProfileViolation` | `profileBlocked` | str(e) 原样 |
-| 4 | 入参语义违例（spec/02 解析规则） | `invalidParam` / `invalidBody` | 指明字段与要求 |
-| 5 | `get_X` 返回 `null` | `notFound` | `User <id> not found` |
-| 6 | 宿主 `AskExhausted` | `askExhausted` | 异常消息原样（已内嵌最后一轮结构化错误与轨迹指引） |
-| 7 | 其余一切异常 | `planError` | str(e) 原样 |
+| 3 | 宿主 `NoContextError`（`requireContext` 开启且 ctx 缺失；core machine code `no_context`，与权限类同档 ⇒ 403） | `noContext` | str(e) 原样 |
+| 4 | 宿主 `ProfileViolation` | `profileBlocked` | str(e) 原样 |
+| 5 | 入参语义违例（spec/02 解析规则） | `invalidParam` / `invalidBody` | 指明字段与要求 |
+| 6 | `get_X` 返回 `null` | `notFound` | `User <id> not found` |
+| 7 | 宿主 `AskExhausted` | `askExhausted` | 异常消息原样（已内嵌最后一轮结构化错误与轨迹指引） |
+| 8 | 其余一切异常 | `planError` | str(e) 原样 |
 
 判定链对齐宿主 ask 的 `_error_from_exception` 先例（py:229–239 / js:240–251），差异仅两点：皮肤多「入参违例」与「notFound」两类协议面错误——它们是 MCP 协议语义，不是 store 语义。
 

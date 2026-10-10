@@ -67,6 +67,8 @@ def error_of(e: BaseException) -> dict:
         return {'code': 'askExhausted', 'message': str(e)}
     if name == 'PermissionError':
         return {'code': 'permissionDenied', 'message': str(e)}
+    if name == 'NoContextError' or getattr(e, 'code', None) == 'no_context':
+        return {'code': 'noContext', 'message': str(e)}
     if name == 'ProfileViolation':
         return {'code': 'profileBlocked', 'message': str(e)}
     return {'code': 'planError', 'message': str(e)}
