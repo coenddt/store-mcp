@@ -30,6 +30,8 @@ await createStdioServer(store, {
 //   command: node ./server.js
 ```
 
+现成示例：[`node/example/dsh-stdio-server.js`](./node/example/dsh-stdio-server.js)——可被 dsh（DeepSeek Harness）spawn 的 stdio 入口（四步：init 数据源 → 注册 schema → `setContext` → `createStdioServer`；环境变量 `MONGO_URI` / `STORE_SCHEMA` / `STORE_USER` / `STORE_ROLES`）。
+
 ### Python（`store-mcp-py`）
 
 ```python
@@ -61,7 +63,7 @@ tools = export_tools(store)
 ## 自动生成的机制
 
 1. **生成源唯一**：store 的纯 JSON schema（与 REST / GraphQL / gRPC 皮肤同源）
-2. **生成面**：每模型 `get_X` / `list_X` / `create_X` / `update_X` / `delete_X` 五个工具 + 全局 `query`；`x-mcp: { hidden: true }` 整模型隐藏；归档表（`XxxDeleted`）过滤与三姊妹逐字同构
+2. **生成面**：每模型 `get_X` / `list_X` / `create_X` / `update_X` / `delete_X` 五个工具 + 全局 `query` 与 `describe_schemas`（列举可用 schema / 定义：模型及其字段/关系/计算列，权限过滤后的紧凑 JSON，透传宿主 `describe_for_ai`）；`x-mcp: { hidden: true }` 整模型隐藏；归档表（`XxxDeleted`）过滤与三姊妹逐字同构
 3. **零语义发明**：tool 入参映射到既有 GQL + params（`list_X.q` 与 REST `?q=` 完全同源），经 core 的语法 / 档位 / 权限 / 硬限四道判决，RBAC / 方言路由全量继承 core 链路
 4. **`query` 工具强制 text2query 档**：AI 自由读出口只读沙箱（core 硬限 1000 行 / 深度 3 / 禁 route_override）
 5. **`ask` 工具（可选）**：仅 `opts.llm` 提供时注册，透传宿主 `ask()` 唯一入口——LLM 翻译 → text2query 档校验执行 → 失败结构化回喂重试；护栏全在宿主，皮肤零新增语义
@@ -69,15 +71,15 @@ tools = export_tools(store)
 
 ## v0 范围与明确不支持项
 
-- 支持：stdio 传输；CRUD 五件套 + `query` + 可选 `ask`；`x-mcp.hidden` 注记；归档过滤
+- 支持：stdio 传输；CRUD 五件套 + `query` + `describe_schemas` + 可选 `ask`；`x-mcp.hidden` 注记；归档过滤
 - 不支持（v1 收编）：streamable HTTP 传输与 store-gateway 第四开关（依赖 HTTP 传输先行）；MCP resources / prompts 原语；工具级 override / extend 注记
 - 双端 smoke 均跑在 mock store + SDK 内存传输上，零真实库、零宿主包依赖；语义一致性以 `spec/` 为准，`conformance/cases.json` 双端加载同一份断言
 
 ## 开发
 
 ```bash
-node: cd node && npm i && npm test          # 24 用例（16 单元 + 8 conformance）
-python: cd py && pip install -e ".[dev]" && pytest   # 24 用例（16 单元 + 8 conformance）
+node: cd node && npm i && npm test          # 27 用例（16 单元 + 8 conformance + 3 错误矩阵）
+python: cd py && pip install -e ".[dev]" && pytest   # 29 用例（18 单元 + 8 conformance + 3 错误矩阵）
 ```
 
 姊妹仓库：[store-api](https://github.com/coenddt/store-api) / [store-graphql](https://github.com/coenddt/store-graphql) / [store-grpc](https://github.com/coenddt/store-grpc) / [store-gateway](https://github.com/coenddt/store-gateway)

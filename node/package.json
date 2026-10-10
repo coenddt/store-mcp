@@ -1,6 +1,6 @@
 {
   "name": "store-mcp-node",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP (Model Context Protocol) adapter that auto-generates tool surfaces for nodejs-store schemas (schema-driven CRUD + sandboxed GQL query + optional ask), stdio transport",
   "main": "src/index.js",
   "files": [
