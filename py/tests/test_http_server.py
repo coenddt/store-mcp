@@ -128,7 +128,7 @@ async def test_http_ctx_mutex():
 
 @pytest.mark.anyio
 async def test_http_unknown_path_404():
-    import httpx2
+    import httpx
 
     store, _ = mock_store()
     port = _free_port()
@@ -136,7 +136,7 @@ async def test_http_unknown_path_404():
         tg.start_soon(run_http, store, {'port': port, 'text2query': _passthrough_profile})
         try:
             await _wait_ready(port)
-            async with httpx2.AsyncClient() as client:
+            async with httpx.AsyncClient() as client:
                 resp = await client.post(f'http://127.0.0.1:{port}/nope', json={})
             assert resp.status_code == 404
             assert resp.json()['error'] == 'notFound'
