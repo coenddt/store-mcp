@@ -8,8 +8,8 @@
 
 | Runtime | Package | Distribution | SDK / transport | Requires |
 |---|---|---|---|---|
-| Node | `store-mcp-node` | npm | `@modelcontextprotocol/sdk` low-level `Server` + **stdio** transport | Node **>= 18** |
-| Python | `store-mcp-py` | PyPI | `mcp` SDK low-level `Server` + **stdio** transport | Python **>= 3.10**, `mcp>=2.2,<3` |
+| Node | `store-mcp-node` | npm | `@modelcontextprotocol/sdk` low-level `Server` + **stdio** and **streamable HTTP** transports | Node **>= 18** |
+| Python | `store-mcp-py` | PyPI | `mcp` SDK low-level `Server` + **stdio** and **streamable HTTP** transports | Python **>= 3.10**, `mcp>=2.2,<3` |
 
 Both runtimes share the same ground truth:
 
@@ -39,7 +39,7 @@ Both runtimes share the same ground truth:
 
 ## What it is
 
-`store-mcp` is a thin **MCP adapter**. It reads the plain JSON schema you have already registered with a common-store host (`nodejs-store` or `py-store`) and exposes it to AI clients (Claude Desktop, TRAE, Cursor, or any MCP-capable agent runtime) as a set of **tools** over stdio.
+`store-mcp` is a thin **MCP adapter**. It reads the plain JSON schema you have already registered with a common-store host (`nodejs-store` or `py-store`) and exposes it to AI clients (Claude Desktop, TRAE, Cursor, or any MCP-capable agent runtime) as a set of **tools** over **stdio or streamable HTTP**.
 
 Its defining rule is **zero invented semantics**:
 
@@ -82,6 +82,8 @@ The `ask` tool additionally consumes the host's `ask(question, { llm, ctx })` si
 | `ctx?` | Server-side trusted user context `{userId, roles}`. Serves both `ask` (registration precondition) and `describe_schemas` (digest visibility). **Never appears in any tool inputSchema.** |
 | `resources?` | Explicit subset of models to build tools from (bypasses archive filtering / `list()`). |
 | `contextProvider?` (Node) / `context_provider?` (Py) | Per-call hook; its return value is injected via `setContext`. See [Errors & context](#errors--context). |
+| `ctxFromRequest?` (Node) / `ctx_from_request?` (Py) | HTTP only: `async (req) => ctx` (Node, raw `http.IncomingMessage`) / `async (request) => ctx` (Py, `starlette.Request`). Resolves the trusted context per request; the result reaches tool handlers exactly as `opts.ctx` would. Mutually exclusive with `ctx` — giving both makes assembly throw. |
+| `port?` / `host?` / `endpoint?` | HTTP only: listen port (default `8635`), bind host (default `127.0.0.1`), MCP path (default `/mcp`). |
 | `text2query?` | Profile context for the `query` tool. Node: `fn(async fn) -> Promise`; Python: a sync `@contextmanager` factory. Defaults are resolved from the host; if neither is available, **assembly throws** with guidance. |
 | `hostAsk?` / `host_ask?` | Host `ask` binding; defaults constructed from the host, overridable for tests. |
 | `schema_module?` | Python only: metadata provider; defaults to duck-typing `store.list/get`, then `py_store.schema`. |
@@ -97,7 +99,6 @@ The `ask` tool additionally consumes the host's `ask(question, { llm, ctx })` si
 
 **Do not use it when**
 
-- You need a **streamable HTTP** transport (v0 is stdio only — see [v0 scope](#v0-scope-and-explicit-non-goals)).
 - You need MCP **resources** or **prompts** primitives (v0 exposes tools only).
 - You need **tool-level** override/extend annotations (v0 supports only the model-level `x-mcp.hidden`).
 - You want a completely custom tool surface that is *not* your registered schema. The skin always generates from the schema; anything else is out of scope.
@@ -230,6 +231,60 @@ Environment variables honoured by the example:
 
 In production, replace steps ①–③ with your own application bootstrap (your schema source, your context source); **step ④ is unchanged**.
 
+### The streamable HTTP entry point
+
+Both runtimes expose the same store, the same generated surface and the same guards — only the carrier changes. The endpoint defaults to `/mcp` and the server binds `127.0.0.1:8635`.
+
+Node:
+
+```js
+const { init, store } = require('nodejs-store');
+const { createHttpServer } = require('store-mcp-node');
+
+await init(db);
+store.register(defn);
+
+const httpServer = await createHttpServer(store, {
+  port: 8635,
+  host: '127.0.0.1',
+  endpoint: '/mcp',
+  // Static trusted context …
+  ctx: { userId: 'u1', roles: ['viewer'] },
+  // … or resolve it per request instead (mutually exclusive with `ctx`):
+  // ctxFromRequest: async (req) => ({ userId: req.headers['x-user-id'], roles: ['viewer'] }),
+});
+// MCP client: POST http://127.0.0.1:8635/mcp
+// await httpServer.close();   // stop listening and close active MCP transports
+```
+
+Python:
+
+```python
+import anyio
+from py_store import init, store
+from store_mcp import run_http
+
+async def bootstrap():
+    await init({'default': 'mongodb://...'})
+    store.register(defn)
+
+anyio.run(bootstrap)
+
+run_http(store, {                      # blocking until cancelled
+    'port': 8635,
+    'host': '127.0.0.1',
+    'endpoint': '/mcp',
+    'ctx': {'userId': 'u1', 'roles': ['viewer']},
+    # 'ctx_from_request': lambda request: {'userId': request.headers.get('x-user-id'), 'roles': ['viewer']},
+})
+```
+
+- **No web framework on the Node side.** `createHttpServer` uses `node:http` plus the SDK's `StreamableHTTPServerTransport`; nothing beyond `@modelcontextprotocol/sdk` needs installing.
+- **Per-request identity.** `ctxFromRequest` / `ctx_from_request` runs before each request is handed to the MCP transport, and the resolved context is what `ask` and `describe_schemas` see. Static `ctx` and the hook cannot both be set — assembly throws instead of silently picking one.
+- **Port conflicts fail loudly.** Binding an occupied port rethrows the native `EADDRINUSE`; the server never silently switches ports.
+- **Transport lifetime differs by SDK, semantics do not.** The Node SDK forbids reusing a stateless transport across requests, so `createHttpServer` builds a fresh transport + server per request; the Python SDK keeps initialize state on the connection, so `run_http` reuses one transport + server and swaps the per-request context. Both expose the identical tool surface.
+- **Sessions are the SDK's.** GET/DELETE are passed through to the SDK; the adapter adds no session management and no built-in auth (put a reverse proxy or your own `ctxFromRequest` in front).
+
 ## Tool catalogue & inputs
 
 For each model `X` the surface generates five tools; two more are always global (`query` and `describe_schemas`), plus an optional global `ask`.
@@ -295,12 +350,12 @@ tools = export_tools(store, opts)   # list[dict]
 
 Because it is the same `buildSurface` used by `createServer`, the definition list is guaranteed consistent with what a running server advertises. Use it when you only want the tool list — no transport, no SDK, no side effects.
 
-Server assembly (both non-transport and stdio) is also exported:
+Server assembly (non-transport, stdio and HTTP) is also exported:
 
-- Node: `createServer(store, opts) -> Promise<{ server, tools }>` (assembles all guards, binds no transport — tests connect via `InMemoryTransport`; v1 HTTP will reuse it) and `createStdioServer(store, opts)` (= `createServer` + `StdioServerTransport`).
-- Python: `create_server(store, opts) -> { server, tools }` and `run_stdio(store, opts)` (= `create_server` + stdio, blocking via anyio).
+- Node: `createServer(store, opts) -> Promise<{ server, tools }>` (assembles all guards, binds no transport — tests connect via `InMemoryTransport`), `createStdioServer(store, opts)` (= `createServer` + `StdioServerTransport`), and `createHttpServer(store, opts) -> Promise<{ server, transport, endpoint, close() }>` (streamable HTTP on `node:http`; `transport` is a `{ create }` factory because the SDK requires a fresh stateless transport per request).
+- Python: `create_server(store, opts) -> { server, tools }`, `run_stdio(store, opts)` (= `create_server` + stdio, blocking via anyio), and `run_http(store, opts)` (streamable HTTP via the SDK's ASGI transport, served by uvicorn).
 
-Missing carrier dependency (Node: no `@modelcontextprotocol/sdk`; Python: no `mcp`) ⇒ `createStdioServer` / `run_stdio` throws with install guidance; `exportTools` / `export_tools` never needs the SDK.
+Missing carrier dependency (Node: no `@modelcontextprotocol/sdk`; Python: no `mcp`) ⇒ the transport entry points throw with install guidance; `exportTools` / `export_tools` never needs the SDK.
 
 ## The `ask` tool — natural-language querying
 
@@ -366,6 +421,7 @@ Success:
 - `opts.ctx` serves `ask` (and `describe_schemas` visibility). It flows into the execution surface through the host's scoped context; the skin neither persists nor mutates it.
 - `opts.contextProvider` (Node) / `opts.context_provider` (Py) is a per-call hook. Its return value is injected via `setContext`; returning `null`/`undefined` **explicitly** calls `setContext(null)` (the clear semantics must land, preventing identity leakage across requests). If the hook throws, it enters the judgment chain (`PermissionError` ⇒ `permissionDenied`; otherwise ⇒ `unauthenticated` with the message verbatim).
 - In v0 stdio single-user scenarios there is usually no per-request identity: without a `contextProvider`, the skin does not touch `setContext` (the process-level context is set by the deployer before assembly).
+- **HTTP transports** accept `ctxFromRequest` / `ctx_from_request` in place of a static `ctx`: the hook resolves the trusted context per request and it reaches tool handlers exactly as `opts.ctx` would. The two are mutually exclusive — assembly throws if both are given.
 - **`query` does not get `opts.ctx` injected.** The `query` tool reuses the "current process context" semantics — the core profile gate rejects a missing context (fail-secure); the skin does not inject or forge a context. To make `query` usable you supply the context via `opts.contextProvider` or a host `setContext`.
 
 ## Scenarios
@@ -536,18 +592,18 @@ schema.json  ──┬──►  store-api       (REST)
 
 **Supported**
 
-- **stdio** transport.
+- **stdio** and **streamable HTTP** transports.
 - CRUD quintets + `query` + `describe_schemas` + optional `ask`.
 - `x-mcp.hidden` model-level annotation.
 - Archive filtering (`XxxDeleted`).
 
 **Not supported (slated for v1)**
 
-- **streamable HTTP** transport and the **store-gateway fourth switch** (both await the HTTP transport first).
+- The **store-gateway fourth switch**.
 - MCP **resources / prompts** primitives.
 - Tool-level override / extend annotations (finer-grained than the model-level `x-mcp.hidden`).
 
-Both smoke suites run on a mock store + the SDK's in-memory transport — **no real database, no host package dependency**. Semantic truth lives in `spec/`; `conformance/cases.json` is asserted byte-identically by both runtimes.
+Both suites run on a mock store — over the SDK's in-memory transport for stdio and a real loopback HTTP listener for the HTTP tests — **no real database, no host package dependency**. Semantic truth lives in `spec/`; `conformance/cases.json` is asserted byte-identically by both runtimes.
 
 ## FAQ
 
@@ -581,8 +637,8 @@ Because that is the archive convention across all four skins. The rule is defens
 **10. Can I get just the tool definitions without starting a server?**
 Yes — `exportTools(store)` (Node) / `export_tools(store)` (Python). It is a pure build with zero SDK dependency.
 
-**11. What transport is supported?**
-stdio only in v0. Streamable HTTP (and the store-gateway fourth switch) are v1.
+**11. What transports are supported?**
+**stdio** and **streamable HTTP**. The store-gateway fourth switch is v1.
 
 **12. Does the model need to know the schema up front?**
 No — it should call `describe_schemas` first to discover available models and fields (permission-filtered), then translate GQL.
@@ -592,11 +648,11 @@ No — it should call `describe_schemas` first to discover available models and 
 ```bash
 # Node
 cd node && npm i && npm test
-# 27 tests: 16 unit + 8 conformance + 3 error-matrix
+# 33 tests: 16 unit + 8 conformance + 3 error-matrix + 6 HTTP
 
 # Python
 cd py && pip install -e ".[dev]" && pytest
-# 29 tests: 18 unit + 8 conformance + 3 error-matrix
+# 33 tests: 18 unit + 8 conformance + 3 error-matrix + 4 HTTP
 ```
 
 Both suites assert against the shared `conformance/cases.json`. To change an expectation, change the JSON first, then run both runtimes.
@@ -604,9 +660,11 @@ Both suites assert against the shared `conformance/cases.json`. To change an exp
 - `node/test/mcp.test.js` — 16 unit tests (surface, get/list/create/update/delete, `query` profile, `describe_schemas`, error pass-through, `contextProvider`, `exportTools`, `filterArchived`).
 - `node/test/conformance.test.js` — 8 tests loading `conformance/cases.json`.
 - `node/test/error-matrix.test.js` — 3 tests pinning error-semantics → protocol-code mapping.
+- `node/test/http-server.test.js` — 6 HTTP tests (real loopback listener + official SDK client: `tools/list`, `tools/call`, per-request `ctxFromRequest`, ctx/ctxFromRequest mutex, `EADDRINUSE`, unknown-path 404).
 - `py/tests/test_mcp.py` — 18 unit tests (symmetric to Node, including a host-profile regression test).
 - `py/tests/test_conformance.py` — 8 tests loading `conformance/cases.json`.
 - `py/tests/test_error_matrix.py` — 3 tests symmetric to the Node error matrix.
+- `py/tests/test_http_server.py` — 4 HTTP tests (real `run_http` listener + official SDK client, covering the same surface as the Node HTTP suite).
 
 ## Related projects
 

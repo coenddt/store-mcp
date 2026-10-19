@@ -8,8 +8,8 @@
 
 | 运行时 | 包 | 分发 | SDK / 传输 | 要求 |
 |---|---|---|---|---|
-| Node | `store-mcp-node` | npm | `@modelcontextprotocol/sdk` 低层 `Server` + **stdio** 传输 | Node **>= 18** |
-| Python | `store-mcp-py` | PyPI | `mcp` SDK 低层 `Server` + **stdio** 传输 | Python **>= 3.10**，`mcp>=2.2,<3` |
+| Node | `store-mcp-node` | npm | `@modelcontextprotocol/sdk` 低层 `Server` + **stdio** 与 **streamable HTTP** 传输 | Node **>= 18** |
+| Python | `store-mcp-py` | PyPI | `mcp` SDK 低层 `Server` + **stdio** 与 **streamable HTTP** 传输 | Python **>= 3.10**，`mcp>=2.2,<3` |
 
 两个运行时共享同一份事实源：
 
@@ -39,7 +39,7 @@
 
 ## 它是什么
 
-`store-mcp` 是一层轻薄的 **MCP 适配器**。它读取你已经注册到 common-store 宿主（`nodejs-store` 或 `py-store`）的纯 JSON schema，并把它作为一组 **工具**，经 stdio 暴露给 AI 客户端（Claude Desktop、TRAE、Cursor，或任何支持 MCP 的 Agent 运行时）。
+`store-mcp` 是一层轻薄的 **MCP 适配器**。它读取你已经注册到 common-store 宿主（`nodejs-store` 或 `py-store`）的纯 JSON schema，并把它作为一组 **工具**，经 **stdio 或 streamable HTTP** 暴露给 AI 客户端（Claude Desktop、TRAE、Cursor，或任何支持 MCP 的 Agent 运行时）。
 
 它的定海准绳是**零语义发明**：
 
@@ -82,6 +82,8 @@ core 与宿主均不被修改：适配器只**消费**宿主的公共 API（见�
 | `ctx?` | 服务端受信用户上下文 `{userId, roles}`。同时服务 `ask`（注册前置）与 `describe_schemas`（摘要可见范围）。**永不出现在任何工具 inputSchema。** |
 | `resources?` | 显式指定从哪些模型建工具（绕过归档过滤 / `list()`）。 |
 | `contextProvider?`（Node）/ `context_provider?`（Py） | 每调用钩子；返回值经 `setContext` 注入。见[错误与上下文](#错误与上下文)。 |
+| `ctxFromRequest?`（Node）/ `ctx_from_request?`（Py） | 仅 HTTP：`async (req) => ctx`（Node，原生 `http.IncomingMessage`）/ `async (request) => ctx`（Py，`starlette.Request`）。每请求解析受信上下文，结果到达工具 handler 的方式与 `opts.ctx` 完全等价。与 `ctx` 互斥——同给则装配期抛错。 |
+| `port?` / `host?` / `endpoint?` | 仅 HTTP：监听端口（缺省 `8635`）、绑定地址（缺省 `127.0.0.1`）、MCP 路径（缺省 `/mcp`）。 |
 | `text2query?` | `query` 工具的档位上下文。node：`fn(async fn) -> Promise`；py：sync `@contextmanager` 工厂。缺省从宿主取；两端皆不可得 ⇒ **装配期抛错**带指引。 |
 | `hostAsk?` / `host_ask?` | 宿主 `ask` 绑定；缺省从宿主构造，测试可注入覆盖。 |
 | `schema_module?` | py 专用：元数据 provider；缺省 duck 探测 `store.list/get`，再 `py_store.schema`。 |
@@ -97,7 +99,6 @@ core 与宿主均不被修改：适配器只**消费**宿主的公共 API（见�
 
 **在这些情况下不要使用**
 
-- 你需要 **streamable HTTP** 传输（v0 仅 stdio——见 [v0 范围](#v0-范围与明确不支持项)）。
 - 你需要 MCP 的 **resources** 或 **prompts** 原语（v0 只暴露 tools）。
 - 你需要**工具级** override / extend 注记（v0 只支持模型级 `x-mcp.hidden`）。
 - 你想要一个**并非**来自你已注册 schema 的完全自定义工具面。皮肤永远从 schema 生成；其它一律超出范围。
@@ -230,6 +231,60 @@ run_stdio(store, {
 
 生产接入：把 ①~③ 换成你自己的应用引导（你的 schema 来源、你的上下文来源）；**第 ④ 步不变**。
 
+### streamable HTTP 入口
+
+双端暴露同一个 store、同一套生成面、同一套守卫——只有承载方式变化。endpoint 缺省 `/mcp`，服务绑定 `127.0.0.1:8635`。
+
+Node：
+
+```js
+const { init, store } = require('nodejs-store');
+const { createHttpServer } = require('store-mcp-node');
+
+await init(db);
+store.register(defn);
+
+const httpServer = await createHttpServer(store, {
+  port: 8635,
+  host: '127.0.0.1',
+  endpoint: '/mcp',
+  // 静态受信上下文 …
+  ctx: { userId: 'u1', roles: ['viewer'] },
+  // … 或改为每请求解析（与 `ctx` 互斥）：
+  // ctxFromRequest: async (req) => ({ userId: req.headers['x-user-id'], roles: ['viewer'] }),
+});
+// MCP 客户端：POST http://127.0.0.1:8635/mcp
+// await httpServer.close();   // 停止监听并关闭活动 MCP 传输
+```
+
+Python：
+
+```python
+import anyio
+from py_store import init, store
+from store_mcp import run_http
+
+async def bootstrap():
+    await init({'default': 'mongodb://...'})
+    store.register(defn)
+
+anyio.run(bootstrap)
+
+run_http(store, {                      # 阻塞运行直到取消
+    'port': 8635,
+    'host': '127.0.0.1',
+    'endpoint': '/mcp',
+    'ctx': {'userId': 'u1', 'roles': ['viewer']},
+    # 'ctx_from_request': lambda request: {'userId': request.headers.get('x-user-id'), 'roles': ['viewer']},
+})
+```
+
+- **Node 侧不引入 Web 框架。** `createHttpServer` 只用 `node:http` + SDK 的 `StreamableHTTPServerTransport`；除 `@modelcontextprotocol/sdk` 外无需安装任何东西。
+- **每请求身份。** `ctxFromRequest` / `ctx_from_request` 在请求交给 MCP 传输之前执行，解析出的上下文就是 `ask` 与 `describe_schemas` 看到的上下文。静态 `ctx` 与该钩子不可同给——装配期抛错，不静默择一。
+- **端口冲突显式失败。** 绑定已占用端口原样抛原生 `EADDRINUSE`；服务绝不静默换端口。
+- **传输生命周期随 SDK 而异，语义不变。** Node SDK 禁止无状态 transport 跨请求复用，故 `createHttpServer` 每请求新建 transport + server；Python SDK 把 initialize 状态挂在连接上，故 `run_http` 复用单 transport + server 并逐请求切换上下文。两端暴露完全相同的工具面。
+- **会话交给 SDK。** GET/DELETE 透传给 SDK；适配层不新增会话管理、不内置鉴权（需要时在反向代理或 `ctxFromRequest` 里做）。
+
 ## 工具清单与入参
 
 对每个模型 `X`，生成五件套；另有两个恒在的全局工具（`query` 与 `describe_schemas`），外加一个可选的全局 `ask`。
@@ -295,12 +350,12 @@ tools = export_tools(store, opts)   # list[dict]
 
 因为它与 `createServer` 用的是同一个 `buildSurface`，定义清单与运行中 server 所广告的清单**保证一致**。只要工具清单、不要传输、不要 SDK、不要副作用时用它。
 
-server 装配（非传输态与 stdio）也已导出：
+server 装配（非传输态、stdio 与 HTTP）均已导出：
 
-- Node：`createServer(store, opts) -> Promise<{ server, tools }>`（装配全部守卫，不绑传输——测试经 `InMemoryTransport` 直连；v1 HTTP 将复用）与 `createStdioServer(store, opts)`（= `createServer` + `StdioServerTransport`）。
-- Python：`create_server(store, opts) -> { server, tools }` 与 `run_stdio(store, opts)`（= `create_server` + stdio，anyio 阻塞运行）。
+- Node：`createServer(store, opts) -> Promise<{ server, tools }>`（装配全部守卫，不绑传输——测试经 `InMemoryTransport` 直连）、`createStdioServer(store, opts)`（= `createServer` + `StdioServerTransport`）、`createHttpServer(store, opts) -> Promise<{ server, transport, endpoint, close() }>`（`node:http` 上的 streamable HTTP；`transport` 为 `{ create }` 工厂，因为 SDK 要求每请求新建无状态 transport）。
+- Python：`create_server(store, opts) -> { server, tools }`、`run_stdio(store, opts)`（= `create_server` + stdio，anyio 阻塞运行）、`run_http(store, opts)`（经 SDK 的 ASGI 传输提供 streamable HTTP，由 uvicorn 承载）。
 
-缺承载依赖（Node 缺 `@modelcontextprotocol/sdk`；Python 缺 `mcp`）⇒ `createStdioServer` / `run_stdio` 抛错并带安装指引；`exportTools` / `export_tools` 永不需要 SDK。
+缺承载依赖（Node 缺 `@modelcontextprotocol/sdk`；Python 缺 `mcp`）⇒ 各传输入口抛错并带安装指引；`exportTools` / `export_tools` 永不需要 SDK。
 
 ## `ask` 工具——自然语言问数
 
@@ -366,6 +421,7 @@ core / 宿主稳定前缀（`ERR_GQL_PARSE:`、`ERR_TEXT2QUERY:`、`ERR_LIMIT:` 
 - `opts.ctx` 服务 `ask`（及 `describe_schemas` 可见范围）。它经宿主的作用域上下文进入执行面；皮肤既不持久化也不改写它。
 - `opts.contextProvider`（Node）/ `opts.context_provider`（Py）是每调用钩子。返回值经 `setContext` 注入；返回 `null`/`undefined` 时**显式**调用 `setContext(null)`（清除语义必须落地，防身份跨请求残留）。钩子抛错则进入判定链（`PermissionError` ⇒ `permissionDenied`；其余 ⇒ `unauthenticated`，message 原样）。
 - v0 stdio 单用户场景常无 per-request 身份：不配 `contextProvider` 时皮肤不触碰 `setContext`（进程级上下文由部署方在装配前自行设置）。
+- **HTTP 传输**以 `ctxFromRequest` / `ctx_from_request` 取代静态 `ctx`：钩子逐请求解析受信上下文，结果到达工具 handler 的方式与 `opts.ctx` 完全等价。两者互斥——同给则装配期抛错。
 - **`query` 不会被注入 `opts.ctx`。** `query` 工具沿用「当前进程上下文」语义——core 档位门禁无 ctx 即拒（fail-secure）；皮肤不注入也不伪造上下文。要让 `query` 可用，经 `opts.contextProvider` 或宿主 `setContext` 自行供 ctx。
 
 ## 场景事例
@@ -536,18 +592,18 @@ schema.json  ──┬──►  store-api       (REST)
 
 **支持**
 
-- **stdio** 传输。
+- **stdio** 与 **streamable HTTP** 传输。
 - CRUD 五件套 + `query` + `describe_schemas` + 可选 `ask`。
 - `x-mcp.hidden` 模型级注记。
 - 归档过滤（`XxxDeleted`）。
 
 **不支持（v1 收编）**
 
-- **streamable HTTP** 传输与 **store-gateway 第四开关**（两者都等待 HTTP 传输先行）。
+- **store-gateway 第四开关**。
 - MCP **resources / prompts** 原语。
 - 工具级 override / extend 注记（比模型级 `x-mcp.hidden` 更细粒度）。
 
-双端 smoke 套件均跑在 mock store + SDK 内存传输上——**零真实库、零宿主包依赖**。语义一致性以 `spec/` 为准，`conformance/cases.json` 双端加载同一份断言逐字一致。
+双端套件均跑在 mock store 上——stdio 用 SDK 内存传输，HTTP 用真实环回监听——**零真实库、零宿主包依赖**。语义一致性以 `spec/` 为准，`conformance/cases.json` 双端加载同一份断言逐字一致。
 
 ## FAQ
 
@@ -582,7 +638,7 @@ schema.json  ──┬──►  store-api       (REST)
 可以——`exportTools(store)`（Node）/ `export_tools(store)`（Python）。它是零 SDK 依赖的纯构建。
 
 **11. 支持什么传输？**
-v0 仅 stdio。streamable HTTP（及 store-gateway 第四开关）为 v1。
+**stdio** 与 **streamable HTTP**。store-gateway 第四开关为 v1。
 
 **12. 模型需要事先知道 schema 吗？**
 不需要——它应先调 `describe_schemas` 发现可用模型与字段（权限过滤后），再翻译 GQL。
@@ -592,11 +648,11 @@ v0 仅 stdio。streamable HTTP（及 store-gateway 第四开关）为 v1。
 ```bash
 # Node
 cd node && npm i && npm test
-# 27 用例：16 单元 + 8 conformance + 3 错误矩阵
+# 33 用例：16 单元 + 8 conformance + 3 错误矩阵 + 6 HTTP
 
 # Python
 cd py && pip install -e ".[dev]" && pytest
-# 29 用例：18 单元 + 8 conformance + 3 错误矩阵
+# 33 用例：18 单元 + 8 conformance + 3 错误矩阵 + 4 HTTP
 ```
 
 两套均对共享的 `conformance/cases.json` 断言。要改断言，先改 JSON，再跑双端。
@@ -604,9 +660,11 @@ cd py && pip install -e ".[dev]" && pytest
 - `node/test/mcp.test.js`——16 个单元用例（工具面、get/list/create/update/delete、`query` 档位、`describe_schemas`、错误透传、`contextProvider`、`exportTools`、`filterArchived`）。
 - `node/test/conformance.test.js`——8 个用例加载 `conformance/cases.json`。
 - `node/test/error-matrix.test.js`——3 个用例钉住错误语义 → 协议码映射。
+- `node/test/http-server.test.js`——6 个 HTTP 用例（真实环回监听 + 官方 SDK 客户端：`tools/list`、`tools/call`、每请求 `ctxFromRequest`、ctx/ctxFromRequest 互斥、`EADDRINUSE`、未知路径 404）。
 - `py/tests/test_mcp.py`——18 个单元用例（与 Node 对称，含一个宿主档位回归用例）。
 - `py/tests/test_conformance.py`——8 个用例加载 `conformance/cases.json`。
 - `py/tests/test_error_matrix.py`——3 个用例，与 Node 错误矩阵对称。
+- `py/tests/test_http_server.py`——4 个 HTTP 用例（真实 `run_http` 监听 + 官方 SDK 客户端，覆盖面与 Node HTTP 套件一致）。
 
 ## 相关项目
 
