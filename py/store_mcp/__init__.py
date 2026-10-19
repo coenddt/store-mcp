@@ -2,10 +2,11 @@
 
 语义依据：../spec/*.md（双端 parity，改动先改 spec）。
 设计哲学：MCP 只是 GQL 的又一层 AI 客户端皮肤 —— 适配层零语义发明。
-双出口：
+三个出口：
     export_tools(store, opts)   → list[dict]（纯构建，零 SDK 依赖，永远可用）
     create_server(store, opts)  → 低层 Server（装配全部守卫，不绑传输）
     run_stdio(store, opts)      → stdio 阻塞运行（create_server + stdio_server）
+    run_http(store, opts)       → streamable HTTP 阻塞运行（每请求新建 transport + Server）
 
 store 端口契约见 spec/00：query / query_one / insert / update / remove / set_context；
 元数据（list / get）走 opts.schema_module → duck(store.list/store.get) → py_store.schema；
@@ -17,7 +18,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-__all__ = ['export_tools', 'create_server', 'run_stdio',
+__all__ = ['export_tools', 'create_server', 'run_stdio', 'run_http',
            'filter_archived', 'schema_projection', 'build_surface', 'error_of']
 
 ARCHIVE_SUFFIX = 'Deleted'
@@ -169,7 +170,8 @@ def build_surface(store: Any, opts: dict):
 
     # spec/01：ask 仅 opts.llm 提供时注册；配 llm 缺 ctx 装配期抛错（fail-secure）
     if opts.get('llm') is not None:
-        if opts.get('ctx') is None:
+        # HTTP 传输下 ctx 随请求到达（ctx_from_request），装配期无静态 ctx 属正常
+        if opts.get('ctx') is None and not callable(opts.get('ctx_from_request')):
             raise RuntimeError(
                 'store-mcp: opts["llm"] 已提供但缺 opts["ctx"] —— ask 工具需要服务端用户上下文'
                 '（如 {"userId": ..., "roles": [...]}）；ctx 属受信参数，不进任何工具入参（D5）')
@@ -259,7 +261,8 @@ def export_tools(store: Any, opts: dict | None = None) -> list[dict]:
 
 def create_server(store: Any, opts: dict | None = None):
     """装配 MCP Server（全部守卫在此，不绑传输——测试经 memory 流直连）。"""
-    opts = dict(opts or {})
+    # 保留调用方字典引用：HTTP 传输每请求覆写 opts['ctx']，handler 必须读同一份（4.2）
+    opts = opts if opts is not None else {}
     try:
         import mcp.types as types
         from mcp.server.lowlevel import Server
@@ -280,7 +283,7 @@ def create_server(store: Any, opts: dict | None = None):
                 '安装 py-store 或传 opts["text2query"]（async 上下文管理器/装饰器，py_store.schema 导出）')
 
     if opts.get('llm') is not None:
-        if opts.get('ctx') is None:
+        if opts.get('ctx') is None and not callable(opts.get('ctx_from_request')):
             raise RuntimeError('store-mcp: opts["llm"] 已提供但缺 opts["ctx"]（fail-secure，spec/01）')
         if not callable(opts.get('host_ask')):
             try:
@@ -334,3 +337,79 @@ def run_stdio(store: Any, opts: dict | None = None) -> None:
             await app.run(read_stream, write_stream, app.create_initialization_options())
 
     anyio.run(_main)
+
+
+async def _send_json(send, status: int, payload: dict) -> None:
+    """ASGI 裸响应（仅用于 endpoint 之外的 404 与身份解码失败的 500）。"""
+    body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    await send({'type': 'http.response.start', 'status': status,
+                'headers': [(b'content-type', b'application/json; charset=utf-8')]})
+    await send({'type': 'http.response.body', 'body': body})
+
+
+async def run_http(store: Any, opts: dict | None = None) -> None:
+    """streamable HTTP 阻塞运行：uvicorn 承载 ASGI（单 transport + 单 Server）。
+
+    opts: {port=8635, host='127.0.0.1', ctx=None, ctx_from_request=None, endpoint='/mcp'}
+    - py SDK 2.x 在连接级维护 initialize 门禁（runner.py：未握手连接拒非豁免方法），
+      故 transport + Server 全生命周期复用；每请求覆写同一份 opts['ctx'] 实现上下文切换
+      （与既有 context_provider → set_context 同构：并发下 ctx 为全局语义）。
+    - ctx_from_request: async (request) => ctx —— 每请求身份解码钩子，与静态 ctx 互斥（同给抛 ValueError）。
+    - GET/DELETE 交给 SDK 默认行为（无会话 ID 时 DELETE 返回 405），不做自定义会话管理。
+    - 阻塞运行直到取消（uvicorn.Server.serve）。
+    """
+    opts = dict(opts or {})
+    try:
+        import anyio
+        import uvicorn
+        from mcp.server.streamable_http import StreamableHTTPServerTransport
+        from starlette.requests import Request
+    except ImportError as e:
+        raise RuntimeError(
+            f'store-mcp-py 缺 streamable HTTP 承载依赖（{e}）。安装：pip install "mcp>=2.2,<3"') from e
+
+    port = opts.pop('port', 8635)
+    host = opts.pop('host', None) or '127.0.0.1'
+    endpoint = opts.pop('endpoint', None) or '/mcp'
+    hook = opts.pop('ctx_from_request', None)
+    log_level = opts.pop('log_level', None) or 'warning'
+
+    if hook is not None and not callable(hook):
+        raise ValueError('store-mcp: opts["ctx_from_request"] 必须为 async (request) => ctx 函数')
+    if opts.get('ctx') is not None and callable(hook):
+        raise ValueError(
+            'store-mcp: opts["ctx"] 与 opts["ctx_from_request"] 互斥 —— '
+            '静态上下文与每请求身份解码不可同时装配（HTTP 下 ctx 由 ctx_from_request 逐请求决定）')
+
+    # 装配期先过一遍守卫（text2query 档位 / ask 依赖）：失败立即抛，不等首个请求才 500
+    create_server(store, dict(opts))
+
+    wire = dict(opts)  # 保留同一引用：asgi 每请求覆写 wire['ctx']，handler 读这份
+    app = create_server(store, wire)['server']
+    transport = StreamableHTTPServerTransport(mcp_session_id=None)
+
+    async def asgi(scope, receive, send):
+        if scope['type'] != 'http':
+            return
+        if scope.get('path') != endpoint:
+            await _send_json(send, 404, {
+                'error': 'notFound',
+                'message': f'未知路径 {scope.get("path")}（MCP endpoint 为 {endpoint}）',
+            })
+            return
+        if callable(hook):
+            try:
+                wire['ctx'] = await hook(Request(scope, receive))
+            except Exception as e:  # noqa: BLE001 —— 身份解码失败显式 500（禁静默放行）
+                await _send_json(send, 500, {'error': 'httpError', 'message': str(e)})
+                return
+        await transport.handle_request(scope, receive, send)  # 内部按 method 分流 POST/GET/DELETE
+
+    async with transport.connect() as (read_stream, write_stream):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(app.run, read_stream, write_stream, app.create_initialization_options())
+            try:
+                config = uvicorn.Config(asgi, host=host, port=port, log_level=log_level, lifespan='off')
+                await uvicorn.Server(config).serve()
+            finally:
+                tg.cancel_scope.cancel()
