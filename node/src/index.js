@@ -5,10 +5,11 @@
  *
  * 语义依据：../spec/*.md（双端 parity，改动先改 spec）。
  * 设计哲学：MCP 只是 GQL 的又一层 AI 客户端皮肤 —— 适配层零语义发明。
- * 双出口：
+ * 三个出口：
  *   exportTools(store, opts)        → { tools }（纯构建，零 SDK 依赖，永远可用）
  *   createStdioServer(store, opts)  → stdio 阻塞运行（同一份工具清单做 tools/list，
  *                                     call 经 spec/02 映射表进 store 原生 API）
+ *   createHttpServer(store, opts)   → streamable HTTP 监听（同一份工具清单，无状态传输）
  *
  * store 端口契约见 spec/00：list/get/query/queryOne/insert/update/remove/setContext；
  * 档位上下文 text2query（query 工具强制沙箱）取用顺序：opts.text2query → require('nodejs-store')。
@@ -131,7 +132,8 @@ function buildSurface(store, opts = {}) {
 
   // spec/01：ask 仅 opts.llm 提供时注册；配 llm 缺 ctx 装配期抛错（fail-secure）
   if (opts.llm !== undefined && opts.llm !== null) {
-    if (opts.ctx === undefined || opts.ctx === null) {
+    // HTTP 传输下 ctx 随请求到达（ctxFromRequest），装配期无静态 ctx 属正常
+    if ((opts.ctx === undefined || opts.ctx === null) && typeof opts.ctxFromRequest !== 'function') {
       throw new Error(
         'store-mcp: opts.llm 已提供但缺 opts.ctx —— ask 工具需要服务端用户上下文（如 {userId, roles}）；'
         + 'ctx 属受信参数，不进任何工具入参（D5）');
@@ -241,7 +243,9 @@ async function createServer(store, opts = {}) {
     }
   }
   if (opts.llm != null) {
-    if (opts.ctx == null) throw new Error('store-mcp: opts.llm 已提供但缺 opts.ctx（fail-secure，spec/01）');
+    if (opts.ctx == null && typeof opts.ctxFromRequest !== 'function') {
+      throw new Error('store-mcp: opts.llm 已提供但缺 opts.ctx（fail-secure，spec/01）');
+    }
     if (typeof opts.hostAsk !== 'function') {
       try {
         const host = require('nodejs-store');
@@ -291,4 +295,106 @@ async function createStdioServer(store, opts = {}) {
   return r;
 }
 
-module.exports = { exportTools, createServer, createStdioServer, filterArchived, schemaProjection, buildSurface, errorOf };
+/**
+ * streamable HTTP 监听：装配 + 每请求一个 StreamableHTTPServerTransport。
+ * opts: { port = 8635, host = '127.0.0.1', ctx = null, ctxFromRequest = null, endpoint = '/mcp' }
+ * - SDK 无状态模式禁止复用 transport（webStandardStreamableHttp 硬约束：复用会串消息 ID），
+ *   故每个请求新建 transport + MCP Server；每请求 ctx 因此天然隔离。
+ * - ctxFromRequest: async (req) => ctxObj —— 每请求身份解码钩子，与静态 ctx 互斥（同给抛错）。
+ * - GET/DELETE 交给 SDK 默认行为，不做自定义会话管理。
+ * - 端口占用不换端口：listen 的原生错误原样抛出（禁静默漂移）。
+ * @returns {Promise<{server: import('node:http').Server, transport: {create: () => object}, endpoint: string, close: () => Promise<void>}>}
+ */
+async function createHttpServer(store, opts = {}) {
+  const http = require('node:http');
+
+  const port = opts.port === undefined ? 8635 : opts.port;
+  const host = opts.host || '127.0.0.1';
+  const endpoint = opts.endpoint || '/mcp';
+  const ctxFromRequest = opts.ctxFromRequest;
+
+  if (ctxFromRequest !== undefined && ctxFromRequest !== null && typeof ctxFromRequest !== 'function') {
+    throw new Error('store-mcp: opts.ctxFromRequest 必须为 async (req) => ctx 函数');
+  }
+  if (opts.ctx !== undefined && opts.ctx !== null && typeof ctxFromRequest === 'function') {
+    throw new Error(
+      'store-mcp: opts.ctx 与 opts.ctxFromRequest 互斥 —— 静态上下文与每请求身份解码不可同时装配'
+      + '（HTTP 下 ctx 由 ctxFromRequest 逐请求决定）');
+  }
+
+  let StreamableHTTPServerTransport;
+  try {
+    ({ StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js'));
+  } catch (e) {
+    throw new Error(
+      `store-mcp-node 的 @modelcontextprotocol/sdk 缺 streamableHttp 传输（${e.message}）。`
+      + '升级：npm i @modelcontextprotocol/sdk');
+  }
+
+  // 装配期先过一遍守卫（text2query 档位 / ask 依赖）：失败立即抛，不等首个请求才 500
+  await createServer(store, { ...opts });
+
+  const createTransport = () => new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  const active = new Set(); // 活跃请求的 { transport, mcpServer }
+
+  const cleanup = (conn) => {
+    active.delete(conn);
+    Promise.allSettled([conn.transport.close(), conn.mcpServer.close()]).then((rs) => {
+      for (const r of rs) if (r.status === 'rejected') console.error('store-mcp: HTTP 连接清理失败', r.reason);
+    });
+  };
+
+  const server = http.createServer(async (req, res) => {
+    try {
+      const { pathname } = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+      if (pathname !== endpoint) {
+        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: 'notFound', message: `未知路径 ${pathname}（MCP endpoint 为 ${endpoint}）` }));
+        return;
+      }
+
+      const wireOpts = { ...opts };
+      if (typeof ctxFromRequest === 'function') {
+        wireOpts.ctx = await ctxFromRequest(req);
+      }
+      const { server: mcpServer } = await createServer(store, wireOpts);
+      const transport = createTransport();
+      const conn = { transport, mcpServer };
+      active.add(conn);
+      res.on('close', () => cleanup(conn));
+
+      await mcpServer.connect(transport);
+      await transport.handleRequest(req, res); // 内部按 req.method 分流 POST/GET/DELETE
+    } catch (e) {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: 'httpError', message: String((e && e.message) || e) }));
+      } else {
+        res.destroy(e); // 响应已开始（如 SSE）：断开连接以显式失败，禁静默截断
+      }
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    const onListening = () => { server.off('error', onError); resolve(); };
+    const onError = (e) => { server.off('listening', onListening); reject(e); };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, host);
+  });
+
+  const close = async () => {
+    const closed = new Promise((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    await closed;
+    const conns = [...active];
+    active.clear();
+    await Promise.all(conns.map((conn) => Promise.allSettled([conn.transport.close(), conn.mcpServer.close()])));
+  };
+
+  return { server, transport: { create: createTransport }, endpoint, close };
+}
+
+module.exports = { exportTools, createServer, createStdioServer, createHttpServer, filterArchived, schemaProjection, buildSurface, errorOf };
