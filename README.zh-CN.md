@@ -6,8 +6,8 @@
 [![PyPI](https://img.shields.io/pypi/v/store-mcp-py.svg)](https://pypi.org/project/store-mcp-py/)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/coenddt/store-mcp/blob/main/LICENSE)
 
-- `store-mcp-node` **0.4.2**（npm）—— Node **>= 18**，承载 `@modelcontextprotocol/sdk`（`^1.31.0`）。
-- `store-mcp-py` **0.4.2**（PyPI）—— Python **>= 3.10**，承载 `mcp>=2.2,<3`。
+- `store-mcp-node` **0.4.3**（npm）—— Node **>= 18**，承载 `@modelcontextprotocol/sdk`（`^1.31.0`）。
+- `store-mcp-py` **0.4.3**（PyPI）—— Python **>= 3.10**，承载 `mcp>=2.2,<3`。
 - 两者都支持 **stdio** 与 **streamable HTTP**，并暴露完全相同的工具面。
 
 中文索引（本页） · English: [README.md](./README.md)

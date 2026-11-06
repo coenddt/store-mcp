@@ -6,8 +6,8 @@
 [![PyPI](https://img.shields.io/pypi/v/store-mcp-py.svg)](https://pypi.org/project/store-mcp-py/)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/coenddt/store-mcp/blob/main/LICENSE)
 
-- `store-mcp-node` **0.4.1** on npm — Node **>= 18**, carrier `@modelcontextprotocol/sdk` (`^1.31.0`).
-- `store-mcp-py` **0.4.1** on PyPI — Python **>= 3.10**, carrier `mcp>=2.2,<3`.
+- `store-mcp-node` **0.4.3** on npm — Node **>= 18**, carrier `@modelcontextprotocol/sdk` (`^1.31.0`).
+- `store-mcp-py` **0.4.3** on PyPI — Python **>= 3.10**, carrier `mcp>=2.2,<3`.
 - Both speak **stdio** and **streamable HTTP**, and both expose the identical tool surface.
 
 Chinese index: [README.zh-CN.md](https://github.com/coenddt/store-mcp/blob/main/README.zh-CN.md)
