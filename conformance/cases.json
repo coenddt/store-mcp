@@ -15,7 +15,7 @@
     "expected_params": { "c0": { "_id": "u1" } },
     "hit_data": { "_id": "u1", "name": "Alice" },
     "miss_args": { "id": "nope" },
-    "miss_code": "notFound"
+    "miss_code": "not_found"
   },
   "list": {
     "tool": "list_User",

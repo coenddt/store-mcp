@@ -139,6 +139,7 @@ async def test_http_unknown_path_404():
             async with httpx.AsyncClient() as client:
                 resp = await client.post(f'http://127.0.0.1:{port}/nope', json={})
             assert resp.status_code == 404
-            assert resp.json()['error'] == 'notFound'
+            assert resp.json()['error'] == 'not_found'
+            assert resp.json()['legacyError'] == 'notFound'
         finally:
             tg.cancel_scope.cancel()

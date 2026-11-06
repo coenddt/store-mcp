@@ -8,7 +8,7 @@
 
 | 工具 | 入参 | store 调用 | 成功语义 |
 |---|---|---|---|
-| `get_User` | `id` | `store.queryOne('User($condition: @c0)'+proj, { c0: { _id: id } })` | 对象 JSON；`null` ⇒ notFound（isError，见 03） |
+| `get_User` | `id` | `store.queryOne('User($condition: @c0)'+proj, { c0: { _id: id } })` | 对象 JSON；`null` ⇒ `not_found`（isError，见 03） |
 | `list_User` | `q`、`params` | `store.query(q ? 'User'+q : 'User'+proj, params)` | 数组 JSON |
 | `create_User` | `body` | `store.insert('User', body)` | 插入文档 JSON |
 | `update_User` | `id`、`set` | `store.update('User', { _id: id }, set)` | store.update 返回值原样 JSON（对齐 REST PATCH，不做二次回读） |

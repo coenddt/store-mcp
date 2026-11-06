@@ -74,12 +74,13 @@ test('get_User: 拼串 $condition: @c0 + proj（fields+computes）+ 命中', asy
   assert.deepStrictEqual(params, { c0: { _id: 'u1' } });
 });
 
-test('get_User: 查无 ⇒ isError + notFound（gRPC NOT_FOUND 同语义位）', async () => {
+test('get_User: 查无 ⇒ isError + not_found（gRPC NOT_FOUND 同语义位；legacyCode 兼容旧值）', async () => {
   const { client } = await start(mockStore());
   const r = await client.callTool({ name: 'get_User', arguments: { id: 'nope' } });
   assert.strictEqual(r.isError, true);
   const err = JSON.parse(r.content[0].text);
-  assert.strictEqual(err.code, 'notFound');
+  assert.strictEqual(err.code, 'not_found');
+  assert.strictEqual(err.legacyCode, 'notFound');
 });
 
 // ── 3. list_X ──

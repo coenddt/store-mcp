@@ -114,7 +114,8 @@ test('非 endpoint 路径 ⇒ 404 + 结构化错误（禁静默空响应）', as
     const res = await fetch(wrong, { method: 'POST' });
     assert.strictEqual(res.status, 404);
     const body = await res.json();
-    assert.strictEqual(body.error, 'notFound');
+    assert.strictEqual(body.error, 'not_found');
+    assert.strictEqual(body.legacyError, 'notFound');
   } finally {
     await stop(hdl);
   }

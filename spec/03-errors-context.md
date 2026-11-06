@@ -13,11 +13,13 @@ tool 执行异常按序判定，命中即止：
 | 3 | 宿主 `NoContextError`（`requireContext` 开启且 ctx 缺失；core machine code `no_context`，与权限类同档 ⇒ 403） | `noContext` | str(e) 原样 |
 | 4 | 宿主 `ProfileViolation` | `profileBlocked` | str(e) 原样 |
 | 5 | 入参语义违例（spec/02 解析规则） | `invalidParam` / `invalidBody` | 指明字段与要求 |
-| 6 | `get_X` 返回 `null` | `notFound` | `User <id> not found` |
+| 6 | `get_X` 返回 `null` | `not_found` | `User <id> not found` |
 | 7 | 宿主 `AskExhausted` | `askExhausted` | 异常消息原样（已内嵌最后一轮结构化错误与轨迹指引） |
 | 8 | 其余一切异常 | `planError` | str(e) 原样 |
 
-判定链对齐宿主 ask 的 `_error_from_exception` 先例（py:229–239 / js:240–251），差异仅两点：皮肤多「入参违例」与「notFound」两类协议面错误——它们是 MCP 协议语义，不是 store 语义。
+判定链对齐宿主 ask 的 `_error_from_exception` 先例（py:229–239 / js:240–251），差异仅两点：皮肤多「入参违例」与「`not_found`」两类协议面错误——它们是 MCP 协议语义，不是 store 语义。
+
+> 命名对齐 A1 错误族：machine code 用 snake_case（`not_found`），与 REST `error.code`、gRPC trailer `store-error-code` 同码表。为不破坏既有调用方，`not_found` 响应额外带 `legacyCode: "notFound"`（过渡字段，下游完成迁移后可移除）；HTTP 未知路径 404 同理带 `legacyError: "notFound"`。
 
 ## core 稳定错误前缀：原样透传
 
@@ -43,7 +45,7 @@ core / Host 的稳定前缀（`ERR_GQL_PARSE:`、`ERR_TEXT2QUERY:`、`ERR_LIMIT:
 ```
 
 - 成功响应**不含任何 error 键**（成功态无错误文案——no-error-masking 正向断言，对齐宿主 AskResult 轨迹契约）；
-- `get_X` 查无不是成功也不是崩溃：走 `notFound` isError（gRPC NOT_FOUND 同语义位）；
+- `get_X` 查无不是成功也不是崩溃：走 `not_found` isError（gRPC NOT_FOUND 同语义位）；
 - `ask` 成功的 text 为 `{data, attempts, events}` 三键 JSON（attempts 末轮无 error 键，宿主已保证）。
 
 ## 上下文（ctx）

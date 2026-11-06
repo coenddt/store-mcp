@@ -52,7 +52,12 @@ function assertObject(value, field) {
 
 // ── spec/03：错误判定链（name 判定跨包安全，不依赖宿主 instanceof）──
 function errorOf(e) {
-  if (e && e.name === 'SkinError') return { code: e.code, message: e.message };
+  if (e && e.name === 'SkinError') {
+    const out = { code: e.code, message: e.message };
+    // A1 错误族：machine code 统一 snake_case；legacyCode 供既有调用方过渡（本轮兼容层）
+    if (e.code === 'not_found') out.legacyCode = 'notFound';
+    return out;
+  }
   if (e && e.name === 'AskExhausted') return { code: 'askExhausted', message: String(e.message) };
   if (e && e.name === 'PermissionError') return { code: 'permissionDenied', message: String(e.message) };
   if (e && (e.name === 'NoContextError' || e.code === 'no_context')) {
@@ -154,7 +159,7 @@ function modelHandler(store, toolName, name, proj, idField) {
       case 'get': {
         const row = await store.queryOne(`${name}($condition: @c0)${proj}`, { c0: { [idField]: args.id } }, null);
         if (row === null || row === undefined) {
-          throw new SkinError('notFound', `${name} ${args.id} not found`);
+          throw new SkinError('not_found', `${name} ${args.id} not found`);
         }
         return row;
       }
@@ -349,7 +354,7 @@ async function createHttpServer(store, opts = {}) {
       const { pathname } = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       if (pathname !== endpoint) {
         res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ error: 'notFound', message: `未知路径 ${pathname}（MCP endpoint 为 ${endpoint}）` }));
+        res.end(JSON.stringify({ error: 'not_found', legacyError: 'notFound', message: `未知路径 ${pathname}（MCP endpoint 为 ${endpoint}）` }));
         return;
       }
 

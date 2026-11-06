@@ -63,7 +63,11 @@ def _assert_object(value: Any, field: str) -> None:
 def error_of(e: BaseException) -> dict:
     name = getattr(e, 'name', None) or e.__class__.__name__
     if name == 'SkinError':
-        return {'code': e.code, 'message': str(e)}  # type: ignore[attr-defined]
+        out = {'code': e.code, 'message': str(e)}  # type: ignore[attr-defined]
+        # A1 错误族：machine code 统一 snake_case；legacyCode 供既有调用方过渡（本轮兼容层）
+        if e.code == 'not_found':  # type: ignore[attr-defined]
+            out['legacyCode'] = 'notFound'
+        return out
     if name == 'AskExhausted':
         return {'code': 'askExhausted', 'message': str(e)}
     if name == 'PermissionError':
@@ -188,7 +192,7 @@ async def _model_handler(store, tool_name, name, proj, id_field, args):
     if verb == 'get':
         row = await store.query_one(f'{name}($condition: @c0){proj}', {'c0': {id_field: args['id']}}, None)
         if row is None:
-            raise SkinError('notFound', f'{name} {args["id"]} not found')
+            raise SkinError('not_found', f'{name} {args["id"]} not found')
         return row
     if verb == 'list':
         q = args.get('q')
@@ -393,7 +397,8 @@ async def run_http(store: Any, opts: dict | None = None) -> None:
             return
         if scope.get('path') != endpoint:
             await _send_json(send, 404, {
-                'error': 'notFound',
+                'error': 'not_found',
+                'legacyError': 'notFound',
                 'message': f'未知路径 {scope.get("path")}（MCP endpoint 为 {endpoint}）',
             })
             return

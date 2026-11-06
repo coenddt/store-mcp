@@ -114,7 +114,8 @@ async def test_get_user_not_found():
     async with await make_session(store) as s:
         r = await s.call_tool('get_User', {'id': 'nope'})
         assert r.is_error
-        assert parse(r)['code'] == 'notFound'
+        assert parse(r)['code'] == 'not_found'
+        assert parse(r)['legacyCode'] == 'notFound'
 
 
 # ── 3. list_X ──
