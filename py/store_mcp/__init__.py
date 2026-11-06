@@ -15,6 +15,7 @@ store 端口契约见 spec/00：query / query_one / insert / update / remove / s
 
 from __future__ import annotations
 
+import contextvars
 import json
 from typing import Any
 
@@ -62,6 +63,12 @@ def _assert_object(value: Any, field: str) -> None:
 
 def error_of(e: BaseException) -> dict:
     name = getattr(e, 'name', None) or e.__class__.__name__
+    # spec/03 判定链第 1 层：宿主反馈事件 profile_blocked（core 未拦住 = 告警信号）。
+    # 事件可能以异常对象携带 type/event_type 到达（宿主 sink 的 per-call 事件面），
+    # conformance 的 profile_blocked_event_type 即消费此字段。
+    event_type = getattr(e, 'event_type', None) or getattr(e, 'type', None)
+    if event_type == 'profile_blocked' or getattr(e, 'code', None) == 'profile_blocked':
+        return {'code': 'profileBlocked', 'message': str(e)}
     if name == 'SkinError':
         out = {'code': e.code, 'message': str(e)}  # type: ignore[attr-defined]
         # A1 错误族：machine code 统一 snake_case；legacyCode 供既有调用方过渡（本轮兼容层）
@@ -77,6 +84,22 @@ def error_of(e: BaseException) -> dict:
     if name == 'ProfileViolation':
         return {'code': 'profileBlocked', 'message': str(e)}
     return {'code': 'planError', 'message': str(e)}
+
+
+# ── spec/02 4.2：HTTP 每请求上下文隔离 ──
+#
+# py SDK 2.x 需连接级复用 Server + Transport（initialize 门禁），因此不能再靠
+# 「每请求复制 opts」隔离 ctx。改用 ContextVar：asgi 每请求 set 本请求 ctx，
+# handler 经 _current_ctx() 读取——并发请求各持独立 contextvars 副本，
+# 不会读到别的请求覆写的 ctx（与 node「每请求新 Server + 新 opts」等价）。
+_UNSET = object()
+_request_ctx: contextvars.ContextVar = contextvars.ContextVar('store_mcp_request_ctx', default=_UNSET)
+
+
+def _current_ctx(opts: dict):
+    """请求级 ctx 优先；无（stdio / 非 HTTP）回落装配期 opts['ctx']。"""
+    v = _request_ctx.get()
+    return opts.get('ctx') if v is _UNSET else v
 
 
 # ── 元数据 provider（spec/00：opts.schema_module → duck → py_store.schema）──
@@ -241,7 +264,7 @@ def _describe_handler(store, opts):
         fn = getattr(store, 'describe_for_ai', None)
         if not callable(fn):
             raise SkinError('planError', 'store 未提供 describe_for_ai（需提供该门面的 py-store 宿主）')
-        return fn(opts.get('ctx'))
+        return fn(_current_ctx(opts))
     return handler
 
 
@@ -254,6 +277,14 @@ def _ask_handler(opts):
         r = await opts['host_ask'](question)
         return {'data': r.data, 'attempts': r.attempts, 'events': r.events}
     return handler
+
+
+def _default_host_ask(opts: dict):
+    """默认 ask 绑定：ctx 每次调用时经 _current_ctx(opts) 读取（禁绑定期固化，决策 M1）。"""
+    async def _ask(question):
+        from py_store import ask as host_ask
+        return await host_ask(question, llm=opts.get('llm'), ctx=_current_ctx(opts))
+    return _ask
 
 
 # ── 双出口 ──
@@ -291,8 +322,8 @@ def create_server(store: Any, opts: dict | None = None):
             raise RuntimeError('store-mcp: opts["llm"] 已提供但缺 opts["ctx"]（fail-secure，spec/01）')
         if not callable(opts.get('host_ask')):
             try:
-                from py_store import ask as host_ask
-                opts['host_ask'] = lambda q: host_ask(q, llm=opts['llm'], ctx=opts['ctx'])
+                import py_store  # noqa: F401 —— 仅验证宿主依赖存在；实际绑定见 _default_host_ask
+                opts['host_ask'] = _default_host_ask(opts)
             except ImportError as e:
                 raise RuntimeError(f'store-mcp: ask 工具需要宿主 py_store（{e}）。安装：pip install py-store') from e
 
@@ -312,10 +343,22 @@ def create_server(store: Any, opts: dict | None = None):
             if handler is None:
                 raise SkinError('invalidParam', f'未知工具: {name}')
             provider = opts.get('context_provider')
+            ctx_token = None
             if provider is not None:
-                ctx = await provider(getattr(params, 'meta', None))
+                try:
+                    ctx = await provider(getattr(params, 'meta', None))
+                except Exception as e:  # noqa: BLE001 —— spec/02：钩子抛错按判定链显式分类
+                    if (getattr(e, 'name', None) or e.__class__.__name__) == 'PermissionError':
+                        raise SkinError('permissionDenied', str(e)) from e
+                    raise SkinError('unauthenticated', str(e)) from e
+                # 本调用内 ctx 以 ContextVar 覆盖（请求隔离），退出恢复
+                ctx_token = _request_ctx.set(ctx if ctx is not None else None)
                 await store.set_context(ctx or None)  # 显式清除语义，spec/02
-            data = await handler(args)
+            try:
+                data = await handler(args)
+            finally:
+                if ctx_token is not None:
+                    _request_ctx.reset(ctx_token)
             # 成功响应不含任何 error 键（spec/03 正向断言）
             return types.CallToolResult(content=[types.TextContent(
                 type='text', text=json.dumps(data if data is not None else None, ensure_ascii=False))])
@@ -356,8 +399,8 @@ async def run_http(store: Any, opts: dict | None = None) -> None:
 
     opts: {port=8635, host='127.0.0.1', ctx=None, ctx_from_request=None, endpoint='/mcp'}
     - py SDK 2.x 在连接级维护 initialize 门禁（runner.py：未握手连接拒非豁免方法），
-      故 transport + Server 全生命周期复用；每请求覆写同一份 opts['ctx'] 实现上下文切换
-      （与既有 context_provider → set_context 同构：并发下 ctx 为全局语义）。
+      故 transport + Server 全生命周期复用；每请求 ctx 写入 ContextVar（本请求私有副本），
+      不再覆写共享 opts['ctx']——并发 A/B 各自只读自己的 ctx（决策 M1，与 node 每请求独立等价）。
     - ctx_from_request: async (request) => ctx —— 每请求身份解码钩子，与静态 ctx 互斥（同给抛 ValueError）。
     - GET/DELETE 交给 SDK 默认行为（无会话 ID 时 DELETE 返回 405），不做自定义会话管理。
     - 阻塞运行直到取消（uvicorn.Server.serve）。
@@ -388,7 +431,7 @@ async def run_http(store: Any, opts: dict | None = None) -> None:
     # 装配期先过一遍守卫（text2query 档位 / ask 依赖）：失败立即抛，不等首个请求才 500
     create_server(store, dict(opts))
 
-    wire = dict(opts)  # 保留同一引用：asgi 每请求覆写 wire['ctx']，handler 读这份
+    wire = dict(opts)  # 装配期静态 opts（ctx_from_request 时不含 ctx；每请求 ctx 走 ContextVar）
     app = create_server(store, wire)['server']
     transport = StreamableHTTPServerTransport(mcp_session_id=None)
 
@@ -402,13 +445,20 @@ async def run_http(store: Any, opts: dict | None = None) -> None:
                 'message': f'未知路径 {scope.get("path")}（MCP endpoint 为 {endpoint}）',
             })
             return
+        token = None
         if callable(hook):
             try:
-                wire['ctx'] = await hook(Request(scope, receive))
+                ctx = await hook(Request(scope, receive))
             except Exception as e:  # noqa: BLE001 —— 身份解码失败显式 500（禁静默放行）
                 await _send_json(send, 500, {'error': 'httpError', 'message': str(e)})
                 return
-        await transport.handle_request(scope, receive, send)  # 内部按 method 分流 POST/GET/DELETE
+            # 请求隔离：ctx 只写入本请求的 contextvars 副本，禁再覆写共享 wire['ctx']
+            token = _request_ctx.set(ctx)
+        try:
+            await transport.handle_request(scope, receive, send)  # 内部按 method 分流 POST/GET/DELETE
+        finally:
+            if token is not None:
+                _request_ctx.reset(token)
 
     async with transport.connect() as (read_stream, write_stream):
         async with anyio.create_task_group() as tg:

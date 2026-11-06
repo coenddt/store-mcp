@@ -52,6 +52,13 @@ function assertObject(value, field) {
 
 // ── spec/03：错误判定链（name 判定跨包安全，不依赖宿主 instanceof）──
 function errorOf(e) {
+  // spec/03 判定链第 1 层：宿主反馈事件 profile_blocked（core 未拦住 = 告警信号）。
+  // 事件可能以异常对象携带 type/event_type 到达（宿主 sink 的 per-call 事件面），
+  // conformance 的 profile_blocked_event_type 即消费此字段。
+  const eventType = e && (e.event_type || e.type);
+  if (eventType === 'profile_blocked' || (e && e.code === 'profile_blocked')) {
+    return { code: 'profileBlocked', message: String(e.message) };
+  }
   if (e && e.name === 'SkinError') {
     const out = { code: e.code, message: e.message };
     // A1 错误族：machine code 统一 snake_case；legacyCode 供既有调用方过渡（本轮兼容层）
@@ -275,7 +282,15 @@ async function createServer(store, opts = {}) {
     try {
       if (!handler) throw new SkinError('invalidParam', `未知工具: ${name}`);
       if (opts.contextProvider) {
-        const ctx = await opts.contextProvider(req.params._meta);
+        let ctx;
+        try {
+          ctx = await opts.contextProvider(req.params._meta);
+        } catch (e) {
+          // spec/02：contextProvider 抛错——PermissionError 保持 permissionDenied，
+          // 其余（含解析/网络失败）一律 unauthenticated（禁回落 planError）。
+          if (e && e.name === 'PermissionError') throw new SkinError('permissionDenied', String(e.message));
+          throw new SkinError('unauthenticated', String(e && e.message !== undefined ? e.message : e));
+        }
         await store.setContext(ctx === undefined ? null : ctx); // 显式清除语义，spec/02
       }
       const data = await handler(args);

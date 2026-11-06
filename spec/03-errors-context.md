@@ -8,7 +8,7 @@ tool 执行异常按序判定，命中即止：
 
 | 序 | 条件 | 码 | message |
 |---|---|---|---|
-| 1 | 宿主反馈事件 `profile_blocked`（core 未拦住本身就是告警信号） | `profileBlocked` | 事件 message 原样 |
+| 1 | 宿主反馈事件 `profile_blocked`（异常对象携带 `type` / `event_type = "profile_blocked"`；core 未拦住本身就是告警信号） | `profileBlocked` | 事件 message 原样 |
 | 2 | 宿主 `PermissionError` | `permissionDenied` | str(e) 原样 |
 | 3 | 宿主 `NoContextError`（`requireContext` 开启且 ctx 缺失；core machine code `no_context`，与权限类同档 ⇒ 403） | `noContext` | str(e) 原样 |
 | 4 | 宿主 `ProfileViolation` | `profileBlocked` | str(e) 原样 |
