@@ -87,6 +87,56 @@ async def test_ask_tool_registered_only_with_llm():
 
 
 @pytest.mark.anyio
+async def test_context_provider_error_maps_unauthenticated():
+    """spec/02：contextProvider 抛错 ⇒ unauthenticated（非 PermissionError），禁回落 planError。"""
+    store, _ = mock_store()
+
+    async def broken_provider(meta):
+        raise RuntimeError('token 解码失败')
+
+    async with await make_session(store, context_provider=broken_provider) as s:
+        r = await s.call_tool('get_User', {'id': 'u1'})
+        assert r.is_error
+        err = json.loads(r.content[0].text)
+        assert err['code'] == 'unauthenticated'
+        assert err['message'] == 'token 解码失败'  # 原样透传
+
+
+@pytest.mark.anyio
+async def test_http_ctx_isolation_unit(monkeypatch):
+    """决策 M1：每请求 ctx 走 ContextVar，并发 A/B 不串用（与 node 每请求独立等价）。"""
+    import sys
+    import types
+
+    from store_mcp import _default_host_ask, _request_ctx
+
+    seen = {}
+
+    async def fake_ask(question, llm=None, ctx=None):
+        await anyio.sleep(0.01)  # 让 A/B 在读取 ctx 前交错
+        seen[question] = ctx
+        return None
+
+    fake_host = types.ModuleType('py_store')
+    fake_host.ask = fake_ask
+    monkeypatch.setitem(sys.modules, 'py_store', fake_host)
+    ask = _default_host_ask({'llm': object(), 'ctx': 'SHARED'})
+
+    async def request(tag):
+        token = _request_ctx.set(tag)
+        try:
+            await ask(tag)
+        finally:
+            _request_ctx.reset(token)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(request, 'A')
+        tg.start_soon(request, 'B')
+
+    assert seen == {'A': 'A', 'B': 'B'}
+
+
+@pytest.mark.anyio
 async def test_ask_guard_missing_ctx():
     store, _ = mock_store()
     with pytest.raises(RuntimeError, match='缺 opts\\["ctx"\\]'):

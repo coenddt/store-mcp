@@ -148,6 +148,23 @@ async def test_error_mappings():
         r = await s.call_tool(cases['get']['tool'], cases['get']['args'])
         assert parse(r)['code'] == cases['errors']['profile_code']
 
+    # spec/03 判定链第 1 层：宿主反馈事件（type=profile_blocked）也必须被消费
+    s4, _ = mock_store()
+
+    class FeedbackEvent(Exception):
+        pass
+
+    async def feedback_blocked(q, params=None, route_override=None):
+        e = FeedbackEvent('profile blocked by core')
+        e.type = cases['errors']['profile_blocked_event_type']
+        raise e
+
+    s4.query_one = feedback_blocked
+    async with await make_session(s4) as s:
+        r = await s.call_tool(cases['get']['tool'], cases['get']['args'])
+        assert r.is_error
+        assert parse(r)['code'] == cases['errors']['profile_code']
+
 
 def test_archive_filter_pure():
     assert filter_archived(cases['archive_filter']['input']) == cases['archive_filter']['expected']

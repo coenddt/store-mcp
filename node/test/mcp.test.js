@@ -181,6 +181,19 @@ test('contextProvider: 返回值 setContext 注入，undefined ⇒ 显式 setCon
   assert.strictEqual(s.calls[1][0], 'queryOne');
 });
 
+test('contextProvider: 抛错 ⇒ unauthenticated（spec/02，禁回落 planError）', async () => {
+  const s = mockStore();
+  const { client } = await start(s, {
+    text2query: async (fn) => fn(),
+    contextProvider: async () => { throw new Error('token 解码失败'); },
+  });
+  const r = await client.callTool({ name: 'get_User', arguments: { id: 'u1' } });
+  assert.strictEqual(r.isError, true);
+  const err = JSON.parse(r.content[0].text);
+  assert.strictEqual(err.code, 'unauthenticated');
+  assert.strictEqual(err.message, 'token 解码失败'); // 原样透传
+});
+
 // ── 8. exportTools：纯构建零 SDK 侧效应 ──
 
 test('exportTools: 与 createServer 的 tools 清单一致（同一 buildSurface）', async () => {

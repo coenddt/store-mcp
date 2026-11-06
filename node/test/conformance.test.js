@@ -132,6 +132,18 @@ test('conformance/errors: 稳定前缀原样透传 + 同名异常映射', async 
   const { client: c3 } = await start(s3);
   const r3 = await c3.callTool({ name: cases.get.tool, arguments: cases.get.args });
   assert.strictEqual(parse(r3).code, cases.errors.profile_code);
+
+  // spec/03 判定链第 1 层：宿主反馈事件（type=profile_blocked）也必须被消费
+  const s4 = mockStore();
+  s4.queryOne = async () => {
+    const e = new Error('profile blocked by core');
+    e.type = cases.errors.profile_blocked_event_type;
+    throw e;
+  };
+  const { client: c4 } = await start(s4);
+  const r4 = await c4.callTool({ name: cases.get.tool, arguments: cases.get.args });
+  assert.strictEqual(r4.isError, true);
+  assert.strictEqual(parse(r4).code, cases.errors.profile_code);
 });
 
 test('conformance/archive_filter: 纯函数逐字一致', () => {
