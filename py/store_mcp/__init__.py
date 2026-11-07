@@ -83,6 +83,17 @@ def error_of(e: BaseException) -> dict:
         return {'code': 'noContext', 'message': str(e)}
     if name == 'ProfileViolation':
         return {'code': 'profileBlocked', 'message': str(e)}
+    # spec/03「core 稳定错误前缀：原样透传」——宿主/core 以字符串前缀到达时按前缀映射到
+    # 判定链同一枚举（否则权限/无上下文/未找到会被兜成 planError，跨语义丢失）。
+    msg = str(e)
+    if getattr(e, 'code', None) in ('NOT_FOUND', 'ERR_NOT_FOUND'):
+        return {'code': 'not_found', 'message': msg, 'legacyCode': 'notFound'}
+    if msg.startswith('ERR_PERMISSION:'):
+        return {'code': 'permissionDenied', 'message': msg}
+    if msg.startswith('ERR_NO_CONTEXT:'):
+        return {'code': 'noContext', 'message': msg}
+    if msg.startswith('ERR_NOT_FOUND:') or msg.startswith('ERR_RESOURCE_NOT_FOUND:'):
+        return {'code': 'not_found', 'message': msg, 'legacyCode': 'notFound'}
     return {'code': 'planError', 'message': str(e)}
 
 
@@ -409,7 +420,7 @@ async def run_http(store: Any, opts: dict | None = None) -> None:
     try:
         import anyio
         import uvicorn
-        from mcp.server.streamable_http import StreamableHTTPServerTransport
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
         from starlette.requests import Request
     except ImportError as e:
         raise RuntimeError(
@@ -433,7 +444,9 @@ async def run_http(store: Any, opts: dict | None = None) -> None:
 
     wire = dict(opts)  # 装配期静态 opts（ctx_from_request 时不含 ctx；每请求 ctx 走 ContextVar）
     app = create_server(store, wire)['server']
-    transport = StreamableHTTPServerTransport(mcp_session_id=None)
+    # stateless：每请求新建 transport + 连接（SDK 官方并发安全用法）。旧实现共享单 transport
+    # 在并发客户端下会互相阻塞（第二轮实测：两个客户端并发 initialize 挂起，串行正常）。
+    manager = StreamableHTTPSessionManager(app, stateless=True)
 
     async def asgi(scope, receive, send):
         if scope['type'] != 'http':
@@ -452,19 +465,15 @@ async def run_http(store: Any, opts: dict | None = None) -> None:
             except Exception as e:  # noqa: BLE001 —— 身份解码失败显式 500（禁静默放行）
                 await _send_json(send, 500, {'error': 'httpError', 'message': str(e)})
                 return
-            # 请求隔离：ctx 只写入本请求的 contextvars 副本，禁再覆写共享 wire['ctx']
+            # 请求隔离：ctx 只写入本请求的 contextvars 副本，禁再覆写共享 wire['ctx']。
+            # manager 在本 task 内派生每请求子 task，contextvars 按 task 快照继承。
             token = _request_ctx.set(ctx)
         try:
-            await transport.handle_request(scope, receive, send)  # 内部按 method 分流 POST/GET/DELETE
+            await manager.handle_request(scope, receive, send)
         finally:
             if token is not None:
                 _request_ctx.reset(token)
 
-    async with transport.connect() as (read_stream, write_stream):
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(app.run, read_stream, write_stream, app.create_initialization_options())
-            try:
-                config = uvicorn.Config(asgi, host=host, port=port, log_level=log_level, lifespan='off')
-                await uvicorn.Server(config).serve()
-            finally:
-                tg.cancel_scope.cancel()
+    async with manager.run():
+        config = uvicorn.Config(asgi, host=host, port=port, log_level=log_level, lifespan='off')
+        await uvicorn.Server(config).serve()

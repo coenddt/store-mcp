@@ -71,6 +71,17 @@ function errorOf(e) {
     return { code: 'noContext', message: String(e.message) };
   }
   if (e && e.name === 'ProfileViolation') return { code: 'profileBlocked', message: String(e.message) };
+  // spec/03「core 稳定错误前缀：原样透传」——宿主/core 以字符串前缀到达时按前缀映射到
+  // 判定链同一枚举（否则权限/无上下文/未找到会被兜成 planError，跨语义丢失）。
+  const msg = e && typeof e.message === 'string' ? e.message : '';
+  if (e && (e.code === 'NOT_FOUND' || e.code === 'ERR_NOT_FOUND')) {
+    return { code: 'not_found', message: String(e.message), legacyCode: 'notFound' };
+  }
+  if (msg.startsWith('ERR_PERMISSION:')) return { code: 'permissionDenied', message: msg };
+  if (msg.startsWith('ERR_NO_CONTEXT:')) return { code: 'noContext', message: msg };
+  if (msg.startsWith('ERR_NOT_FOUND:') || msg.startsWith('ERR_RESOURCE_NOT_FOUND:')) {
+    return { code: 'not_found', message: msg, legacyCode: 'notFound' };
+  }
   return { code: 'planError', message: String((e && e.message) || e) };
 }
 

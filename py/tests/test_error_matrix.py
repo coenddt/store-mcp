@@ -25,6 +25,25 @@ def test_matrix_no_context_to_no_context():
     assert error_of(by_code)["code"] == "noContext"
 
 
+def test_matrix_core_prefix_channels():
+    """第二轮：core 以字符串前缀到达时按判定链映射，不得兜成 planError。"""
+    assert error_of(Exception("ERR_PERMISSION:RBAC:无权写入"))["code"] == "permissionDenied"
+    assert error_of(Exception("ERR_NO_CONTEXT:上下文缺失"))["code"] == "noContext"
+
+    r = error_of(Exception("ERR_NOT_FOUND:行不存在"))
+    assert r["code"] == "not_found"
+    assert r["legacyCode"] == "notFound"
+    assert r["message"] == "ERR_NOT_FOUND:行不存在"
+
+    r = error_of(Exception("ERR_RESOURCE_NOT_FOUND:资源无任何可读副本"))
+    assert r["code"] == "not_found"
+    assert r["legacyCode"] == "notFound"
+
+    by_code = Exception("行不存在")
+    by_code.code = "ERR_NOT_FOUND"
+    assert error_of(by_code)["code"] == "not_found"
+
+
 def test_matrix_other_to_plan_error():
     r = error_of(Exception("boom"))
     assert r["code"] == "planError"

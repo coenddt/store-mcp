@@ -12,10 +12,15 @@ tool 执行异常按序判定，命中即止：
 | 2 | 宿主 `PermissionError` | `permissionDenied` | str(e) 原样 |
 | 3 | 宿主 `NoContextError`（`requireContext` 开启且 ctx 缺失；core machine code `no_context`，与权限类同档 ⇒ 403） | `noContext` | str(e) 原样 |
 | 4 | 宿主 `ProfileViolation` | `profileBlocked` | str(e) 原样 |
-| 5 | 入参语义违例（spec/02 解析规则） | `invalidParam` / `invalidBody` | 指明字段与要求 |
-| 6 | `get_X` 返回 `null` | `not_found` | `User <id> not found` |
-| 7 | 宿主 `AskExhausted` | `askExhausted` | 异常消息原样（已内嵌最后一轮结构化错误与轨迹指引） |
-| 8 | 其余一切异常 | `planError` | str(e) 原样 |
+| 5 | 宿主/ core 以稳定前缀到达：`ERR_PERMISSION:` | `permissionDenied` | str(e) 原样（保留前缀） |
+| 6 | 稳定前缀 `ERR_NO_CONTEXT:`（与 machine code `no_context` 同语义） | `noContext` | str(e) 原样 |
+| 7 | 未找到：machine code `NOT_FOUND` / `ERR_NOT_FOUND`，或前缀 `ERR_NOT_FOUND:` / `ERR_RESOURCE_NOT_FOUND:` | `not_found`（附 `legacyCode: "notFound"`） | str(e) 原样（保留前缀） |
+| 8 | 入参语义违例（spec/02 解析规则） | `invalidParam` / `invalidBody` | 指明字段与要求 |
+| 9 | `get_X` 返回 `null` | `not_found` | `User <id> not found` |
+| 10 | 宿主 `AskExhausted` | `askExhausted` | 异常消息原样（已内嵌最后一轮结构化错误与轨迹指引） |
+| 11 | 其余一切异常 | `planError` | str(e) 原样 |
+
+> 第 5~7 层是本轮补齐的：宿主 `PermissionError` / `NoContextError` 类型判定（第 2/3 层）之外，core 还可能以**字符串前缀**（跨包 / 字符串通道宿主）到达；缺此层会让权限拒绝与「查无」被兜成 `planError`，与「前缀映射契约」及 no-error-masking 的跨语义兜底禁令冲突。`invalidParam` / `invalidBody` 是皮肤侧 `SkinError`，在 SkinError 分支内处理，不受本层影响。
 
 判定链对齐宿主 ask 的 `_error_from_exception` 先例（py:229–239 / js:240–251），差异仅两点：皮肤多「入参违例」与「`not_found`」两类协议面错误——它们是 MCP 协议语义，不是 store 语义。
 

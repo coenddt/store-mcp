@@ -116,6 +116,52 @@ async def test_http_ctx_from_request():
 
 
 @pytest.mark.anyio
+async def test_http_concurrent_ctx_isolation():
+    """第二轮：并发请求的 ctx 必须各归各（contextvars 隔离）。
+
+    旧实现把每请求 ctx 写回共享 `wire['ctx']`，并发下后到请求覆盖先到请求 ——
+    本用例可稳定复现（人为放大窗口后 A 读到 B 的身份）。
+    """
+    store, _ = mock_store()
+
+    def capture(ctx=None):
+        user = (ctx or {}).get('user')
+        return [{'name': 'User', 'user': user}]
+
+    store.describe_for_ai = capture
+    port = _free_port()
+
+    async def hook(request):
+        return {'user': request.query_params.get('user')}
+
+    async def call_as(user: str):
+        url = f'http://127.0.0.1:{port}/mcp?user={user}'
+        async with streamable_http_client(url) as streams:
+            read_stream, write_stream = streams[0], streams[1]
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool('describe_schemas', {})
+                assert not result.is_error, result
+                return _parse(result)[0]['user']
+
+    async with anyio.create_task_group() as server_tg:
+        server_tg.start_soon(run_http, store, {
+            'port': port, 'text2query': _passthrough_profile, 'ctx_from_request': hook,
+        })
+        try:
+            await _wait_ready(port)
+            got = {}
+            async with anyio.create_task_group() as tg:
+                async def wrap(user):
+                    got[user] = await call_as(user)
+                tg.start_soon(wrap, 'alice')
+                tg.start_soon(wrap, 'bob')
+            assert got == {'alice': 'alice', 'bob': 'bob'}, f'ctx 串请求: {got}'
+        finally:
+            server_tg.cancel_scope.cancel()
+
+
+@pytest.mark.anyio
 async def test_http_ctx_mutex():
     store, _ = mock_store()
     with pytest.raises(ValueError, match='互斥'):
