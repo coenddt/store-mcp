@@ -163,7 +163,9 @@ async def test_error_mappings():
     async with await make_session(s4) as s:
         r = await s.call_tool(cases['get']['tool'], cases['get']['args'])
         assert r.is_error
-        assert parse(r)['code'] == cases['errors']['profile_code']
+        # 主码回旧值 planError，事件语义放 detailCode（老码原地不动）
+        assert parse(r)['code'] == cases['errors']['plan_error_code']
+        assert parse(r)['detailCode'] == cases['errors']['profile_blocked_detail_code']
 
 
 def test_archive_filter_pure():

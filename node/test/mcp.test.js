@@ -181,7 +181,7 @@ test('contextProvider: 返回值 setContext 注入，undefined ⇒ 显式 setCon
   assert.strictEqual(s.calls[1][0], 'queryOne');
 });
 
-test('contextProvider: 抛错 ⇒ unauthenticated（spec/02，禁回落 planError）', async () => {
+test('contextProvider: 抛错 ⇒ planError + detailCode=unauthenticated（老码不动，语义另置）', async () => {
   const s = mockStore();
   const { client } = await start(s, {
     text2query: async (fn) => fn(),
@@ -190,7 +190,8 @@ test('contextProvider: 抛错 ⇒ unauthenticated（spec/02，禁回落 planErro
   const r = await client.callTool({ name: 'get_User', arguments: { id: 'u1' } });
   assert.strictEqual(r.isError, true);
   const err = JSON.parse(r.content[0].text);
-  assert.strictEqual(err.code, 'unauthenticated');
+  assert.strictEqual(err.code, 'planError');
+  assert.strictEqual(err.detailCode, 'unauthenticated');
   assert.strictEqual(err.message, 'token 解码失败'); // 原样透传
 });
 

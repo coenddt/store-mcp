@@ -29,22 +29,27 @@ test('映射矩阵：NoContext 档（name / code 两通道）→ noContext', () 
   assert.equal(errorOf(byCode).code, 'noContext');
 });
 
-test('映射矩阵：core 字符串前缀通道 → 判定链同枚举（禁兜成 planError）', () => {
-  assert.equal(errorOf(new Error('ERR_PERMISSION:RBAC:无权写入')).code, 'permissionDenied');
-  assert.equal(errorOf(new Error('ERR_NO_CONTEXT:上下文缺失')).code, 'noContext');
+test('映射矩阵：core 字符串前缀通道 → 主码 planError + detailCode 承载具体语义', () => {
+  let r = errorOf(new Error('ERR_PERMISSION:RBAC:无权写入'));
+  assert.equal(r.code, 'planError');
+  assert.equal(r.detailCode, 'permissionDenied');
+  r = errorOf(new Error('ERR_NO_CONTEXT:上下文缺失'));
+  assert.equal(r.code, 'planError');
+  assert.equal(r.detailCode, 'noContext');
 
   const nf = errorOf(new Error('ERR_NOT_FOUND:行不存在'));
-  assert.equal(nf.code, 'not_found');
-  assert.equal(nf.legacyCode, 'notFound');
+  assert.equal(nf.code, 'planError');
+  assert.equal(nf.detailCode, 'not_found');
   assert.equal(nf.message, 'ERR_NOT_FOUND:行不存在');
 
   const rnf = errorOf(new Error('ERR_RESOURCE_NOT_FOUND:资源无任何可读副本'));
-  assert.equal(rnf.code, 'not_found');
-  assert.equal(rnf.legacyCode, 'notFound');
+  assert.equal(rnf.code, 'planError');
+  assert.equal(rnf.detailCode, 'not_found');
 
   const byCode = new Error('行不存在');
   byCode.code = 'ERR_NOT_FOUND';
-  assert.equal(errorOf(byCode).code, 'not_found');
+  assert.equal(errorOf(byCode).code, 'planError');
+  assert.equal(errorOf(byCode).detailCode, 'not_found');
 });
 
 test('映射矩阵：Other 档 → planError 透传原文（禁静默）', () => {

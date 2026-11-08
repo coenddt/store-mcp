@@ -88,7 +88,7 @@ async def test_ask_tool_registered_only_with_llm():
 
 @pytest.mark.anyio
 async def test_context_provider_error_maps_unauthenticated():
-    """spec/02：contextProvider 抛错 ⇒ unauthenticated（非 PermissionError），禁回落 planError。"""
+    """spec/02：contextProvider 抛错 ⇒ 主码 planError + detailCode=unauthenticated（老码不动）。"""
     store, _ = mock_store()
 
     async def broken_provider(meta):
@@ -98,7 +98,8 @@ async def test_context_provider_error_maps_unauthenticated():
         r = await s.call_tool('get_User', {'id': 'u1'})
         assert r.is_error
         err = json.loads(r.content[0].text)
-        assert err['code'] == 'unauthenticated'
+        assert err['code'] == 'planError'
+        assert err['detailCode'] == 'unauthenticated'
         assert err['message'] == 'token 解码失败'  # 原样透传
 
 

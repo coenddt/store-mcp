@@ -37,10 +37,11 @@ function idFieldOf(defn) {
 
 // ── 协议面错误（spec/03 判定链的皮肤侧子集）──
 class SkinError extends Error {
-  constructor(code, message) {
+  constructor(code, message, detailCode) {
     super(message);
     this.name = 'SkinError';
     this.code = code;
+    this.detailCode = detailCode;
   }
 }
 
@@ -57,12 +58,14 @@ function errorOf(e) {
   // conformance 的 profile_blocked_event_type 即消费此字段。
   const eventType = e && (e.event_type || e.type);
   if (eventType === 'profile_blocked' || (e && e.code === 'profile_blocked')) {
-    return { code: 'profileBlocked', message: String(e.message) };
+    // 主码保持旧值 planError；具体语义放 detailCode（不惊动按 planError 分支的调用方）
+    return { code: 'planError', detailCode: 'profileBlocked', message: String(e.message) };
   }
   if (e && e.name === 'SkinError') {
     const out = { code: e.code, message: e.message };
     // A1 错误族：machine code 统一 snake_case；legacyCode 供既有调用方过渡（本轮兼容层）
     if (e.code === 'not_found') out.legacyCode = 'notFound';
+    if (e.detailCode) out.detailCode = e.detailCode;
     return out;
   }
   if (e && e.name === 'AskExhausted') return { code: 'askExhausted', message: String(e.message) };
@@ -74,13 +77,14 @@ function errorOf(e) {
   // spec/03「core 稳定错误前缀：原样透传」——宿主/core 以字符串前缀到达时按前缀映射到
   // 判定链同一枚举（否则权限/无上下文/未找到会被兜成 planError，跨语义丢失）。
   const msg = e && typeof e.message === 'string' ? e.message : '';
+  // 前缀映射：主码仍回旧值 planError，具体语义放 detailCode（老码原地不动）
   if (e && (e.code === 'NOT_FOUND' || e.code === 'ERR_NOT_FOUND')) {
-    return { code: 'not_found', message: String(e.message), legacyCode: 'notFound' };
+    return { code: 'planError', detailCode: 'not_found', message: String(e.message) };
   }
-  if (msg.startsWith('ERR_PERMISSION:')) return { code: 'permissionDenied', message: msg };
-  if (msg.startsWith('ERR_NO_CONTEXT:')) return { code: 'noContext', message: msg };
+  if (msg.startsWith('ERR_PERMISSION:')) return { code: 'planError', detailCode: 'permissionDenied', message: msg };
+  if (msg.startsWith('ERR_NO_CONTEXT:')) return { code: 'planError', detailCode: 'noContext', message: msg };
   if (msg.startsWith('ERR_NOT_FOUND:') || msg.startsWith('ERR_RESOURCE_NOT_FOUND:')) {
-    return { code: 'not_found', message: msg, legacyCode: 'notFound' };
+    return { code: 'planError', detailCode: 'not_found', message: msg };
   }
   return { code: 'planError', message: String((e && e.message) || e) };
 }
@@ -297,10 +301,15 @@ async function createServer(store, opts = {}) {
         try {
           ctx = await opts.contextProvider(req.params._meta);
         } catch (e) {
-          // spec/02：contextProvider 抛错——PermissionError 保持 permissionDenied，
-          // 其余（含解析/网络失败）一律 unauthenticated（禁回落 planError）。
+          // spec/02：contextProvider 抛错——主码仍回旧值 planError（不惊动下游分支），
+          // 具体语义放 detailCode：PermissionError ⇒ permissionDenied，
+          // 其余（含解析/网络失败）⇒ unauthenticated（禁静默兜底）。
           if (e && e.name === 'PermissionError') throw new SkinError('permissionDenied', String(e.message));
-          throw new SkinError('unauthenticated', String(e && e.message !== undefined ? e.message : e));
+          throw new SkinError(
+            'planError',
+            String(e && e.message !== undefined ? e.message : e),
+            'unauthenticated',
+          );
         }
         await store.setContext(ctx === undefined ? null : ctx); // 显式清除语义，spec/02
       }

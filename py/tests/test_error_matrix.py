@@ -26,22 +26,27 @@ def test_matrix_no_context_to_no_context():
 
 
 def test_matrix_core_prefix_channels():
-    """第二轮：core 以字符串前缀到达时按判定链映射，不得兜成 planError。"""
-    assert error_of(Exception("ERR_PERMISSION:RBAC:无权写入"))["code"] == "permissionDenied"
-    assert error_of(Exception("ERR_NO_CONTEXT:上下文缺失"))["code"] == "noContext"
+    """第二轮兼容化：主码仍回旧值 planError，具体语义放 detailCode（老码原地不动）。"""
+    r = error_of(Exception("ERR_PERMISSION:RBAC:无权写入"))
+    assert r["code"] == "planError"
+    assert r["detailCode"] == "permissionDenied"
+    r = error_of(Exception("ERR_NO_CONTEXT:上下文缺失"))
+    assert r["code"] == "planError"
+    assert r["detailCode"] == "noContext"
 
     r = error_of(Exception("ERR_NOT_FOUND:行不存在"))
-    assert r["code"] == "not_found"
-    assert r["legacyCode"] == "notFound"
+    assert r["code"] == "planError"
+    assert r["detailCode"] == "not_found"
     assert r["message"] == "ERR_NOT_FOUND:行不存在"
 
     r = error_of(Exception("ERR_RESOURCE_NOT_FOUND:资源无任何可读副本"))
-    assert r["code"] == "not_found"
-    assert r["legacyCode"] == "notFound"
+    assert r["code"] == "planError"
+    assert r["detailCode"] == "not_found"
 
     by_code = Exception("行不存在")
     by_code.code = "ERR_NOT_FOUND"
-    assert error_of(by_code)["code"] == "not_found"
+    assert error_of(by_code)["code"] == "planError"
+    assert error_of(by_code)["detailCode"] == "not_found"
 
 
 def test_matrix_other_to_plan_error():

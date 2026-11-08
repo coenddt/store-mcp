@@ -49,9 +49,10 @@ def id_field_of(defn: dict | None) -> str:
 # ── 协议面错误（spec/03 判定链的皮肤侧子集）──
 
 class SkinError(Exception):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, detail_code: str | None = None):
         super().__init__(message)
         self.code = code
+        self.detail_code = detail_code
 
 
 def _assert_object(value: Any, field: str) -> None:
@@ -68,12 +69,15 @@ def error_of(e: BaseException) -> dict:
     # conformance 的 profile_blocked_event_type 即消费此字段。
     event_type = getattr(e, 'event_type', None) or getattr(e, 'type', None)
     if event_type == 'profile_blocked' or getattr(e, 'code', None) == 'profile_blocked':
-        return {'code': 'profileBlocked', 'message': str(e)}
+        # 主码保持旧值 planError；具体语义放 detailCode（不惊动按 planError 分支的调用方）
+        return {'code': 'planError', 'detailCode': 'profileBlocked', 'message': str(e)}
     if name == 'SkinError':
         out = {'code': e.code, 'message': str(e)}  # type: ignore[attr-defined]
         # A1 错误族：machine code 统一 snake_case；legacyCode 供既有调用方过渡（本轮兼容层）
         if e.code == 'not_found':  # type: ignore[attr-defined]
             out['legacyCode'] = 'notFound'
+        if getattr(e, 'detail_code', None):
+            out['detailCode'] = e.detail_code  # type: ignore[attr-defined]
         return out
     if name == 'AskExhausted':
         return {'code': 'askExhausted', 'message': str(e)}
@@ -86,14 +90,15 @@ def error_of(e: BaseException) -> dict:
     # spec/03「core 稳定错误前缀：原样透传」——宿主/core 以字符串前缀到达时按前缀映射到
     # 判定链同一枚举（否则权限/无上下文/未找到会被兜成 planError，跨语义丢失）。
     msg = str(e)
+    # 前缀映射：主码仍回旧值 planError，具体语义放 detailCode（老码原地不动）
     if getattr(e, 'code', None) in ('NOT_FOUND', 'ERR_NOT_FOUND'):
-        return {'code': 'not_found', 'message': msg, 'legacyCode': 'notFound'}
+        return {'code': 'planError', 'detailCode': 'not_found', 'message': msg}
     if msg.startswith('ERR_PERMISSION:'):
-        return {'code': 'permissionDenied', 'message': msg}
+        return {'code': 'planError', 'detailCode': 'permissionDenied', 'message': msg}
     if msg.startswith('ERR_NO_CONTEXT:'):
-        return {'code': 'noContext', 'message': msg}
+        return {'code': 'planError', 'detailCode': 'noContext', 'message': msg}
     if msg.startswith('ERR_NOT_FOUND:') or msg.startswith('ERR_RESOURCE_NOT_FOUND:'):
-        return {'code': 'not_found', 'message': msg, 'legacyCode': 'notFound'}
+        return {'code': 'planError', 'detailCode': 'not_found', 'message': msg}
     return {'code': 'planError', 'message': str(e)}
 
 
@@ -361,7 +366,8 @@ def create_server(store: Any, opts: dict | None = None):
                 except Exception as e:  # noqa: BLE001 —— spec/02：钩子抛错按判定链显式分类
                     if (getattr(e, 'name', None) or e.__class__.__name__) == 'PermissionError':
                         raise SkinError('permissionDenied', str(e)) from e
-                    raise SkinError('unauthenticated', str(e)) from e
+                    # 主码仍回旧值 planError，具体语义放 detailCode（老码原地不动）
+                    raise SkinError('planError', str(e), detail_code='unauthenticated') from e
                 # 本调用内 ctx 以 ContextVar 覆盖（请求隔离），退出恢复
                 ctx_token = _request_ctx.set(ctx if ctx is not None else None)
                 await store.set_context(ctx or None)  # 显式清除语义，spec/02

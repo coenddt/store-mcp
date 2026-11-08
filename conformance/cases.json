@@ -63,7 +63,8 @@
     "permission_code": "permissionDenied",
     "profile_exception": "ProfileViolation",
     "profile_code": "profileBlocked",
-    "profile_blocked_event_type": "profile_blocked"
+    "profile_blocked_event_type": "profile_blocked",
+    "profile_blocked_detail_code": "profileBlocked"
   },
   "archive_filter": {
     "input": ["User", "OrderDeleted", "Order", "StandaloneDeleted"],

@@ -143,7 +143,9 @@ test('conformance/errors: 稳定前缀原样透传 + 同名异常映射', async 
   const { client: c4 } = await start(s4);
   const r4 = await c4.callTool({ name: cases.get.tool, arguments: cases.get.args });
   assert.strictEqual(r4.isError, true);
-  assert.strictEqual(parse(r4).code, cases.errors.profile_code);
+  // 主码回旧值 planError，事件语义放 detailCode（老码原地不动）
+  assert.strictEqual(parse(r4).code, cases.errors.plan_error_code);
+  assert.strictEqual(parse(r4).detailCode, cases.errors.profile_blocked_detail_code);
 });
 
 test('conformance/archive_filter: 纯函数逐字一致', () => {
