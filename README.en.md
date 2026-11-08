@@ -6,8 +6,8 @@
 [![PyPI](https://img.shields.io/pypi/v/store-mcp-py.svg)](https://pypi.org/project/store-mcp-py/)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/coenddt/store-mcp/blob/main/LICENSE)
 
-- `store-mcp-node` **0.4.3** on npm — Node **>= 18**, carrier `@modelcontextprotocol/sdk` (`^1.31.0`).
-- `store-mcp-py` **0.4.3** on PyPI — Python **>= 3.10**, carrier `mcp>=2.2,<3`.
+- `store-mcp-node` **0.4.4** on npm — Node **>= 18**, carrier `@modelcontextprotocol/sdk` (`^1.31.0`).
+- `store-mcp-py` **0.4.4** on PyPI — Python **>= 3.10**, carrier `mcp>=2.2,<3`.
 - Both speak **stdio** and **streamable HTTP**, and both expose the identical tool surface.
 
 中文: [README.md](./README.md)
@@ -84,13 +84,28 @@ Two details matter. First, `params` is a native MCP object — no `_json` string
 
 Every data tool call passes through core's four judgments — syntax, profile, permission and hard limits — because it is the same call the other skins make. The adapter never widens access. It only classifies the outcome:
 
-| State | Wire response | Code |
-|---|---|---|
-| **Success** | `content[0].text` is the JSON payload; no error key exists | — |
-| **Miss** | `isError: true` with a deterministic message such as `User u1 not found` | `notFound` |
-| **Denied** | `isError: true`; the host's permission exception text is passed through verbatim | `permissionDenied` |
+| State | Wire response | Code | detailCode |
+|---|---|---|---|
+| **Success** | `content[0].text` is the JSON payload; no error key exists | — | — |
+| **Miss** | `isError: true` with a deterministic message such as `User u1 not found` | `notFound` | — |
+| **Denied** | `isError: true`; the host's permission exception text is passed through verbatim | `permissionDenied` | — |
 
 The three states are deliberately distinct: a missing row is neither a success with an empty object nor a crash, and a permission failure keeps the original wording instead of being rewrapped into a generic "forbidden". Behind those three sit the rest of a fixed judgment chain: a `ProfileViolation` becomes `profileBlocked`; a missing required context becomes `noContext`; an argument that is an array, a scalar or an empty string becomes `invalidParam` or `invalidBody`; exhausted `ask` retries become `askExhausted`; anything else becomes `planError`.
+
+**`detailCode` (since 0.4.4)**: errors that land in the `planError` bucket no longer carry only the generic
+"plan error" verdict — the specific meaning moves to `detailCode` while `code` keeps its old value, so clients that
+branch on `planError` need no change:
+
+| Arrival form | `code` (unchanged) | `detailCode` |
+|---|---|---|
+| `contextProvider` throws a non-permission error | `planError` | `unauthenticated` |
+| Exception carries `type` / `event_type = "profile_blocked"` | `planError` | `profileBlocked` |
+| `ERR_PERMISSION:` prefix | `planError` | `permissionDenied` |
+| `ERR_NO_CONTEXT:` prefix | `planError` | `noContext` |
+| `ERR_NOT_FOUND:` / `ERR_RESOURCE_NOT_FOUND:` / `NOT_FOUND` prefix | `planError` | `not_found` |
+
+0.4.4 ships on a **single line**: the `release/0.4.x` maintenance branch was merged back into main and deleted,
+because this release has no breaking change and no longer needs a second line.
 
 Core's stable prefixes — `ERR_GQL_PARSE:`, `ERR_TEXT2QUERY:`, `ERR_LIMIT:` — are preserved verbatim inside `message`, never summarized or stripped. Detection is by exception name or machine code rather than `instanceof`, so it stays correct across package boundaries.
 

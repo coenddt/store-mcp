@@ -6,8 +6,8 @@
 [![PyPI](https://img.shields.io/pypi/v/store-mcp-py.svg)](https://pypi.org/project/store-mcp-py/)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/coenddt/store-mcp/blob/main/LICENSE)
 
-- `store-mcp-node` **0.4.3**（npm）—— Node **>= 18**，承载 `@modelcontextprotocol/sdk`（`^1.31.0`）。
-- `store-mcp-py` **0.4.3**（PyPI）—— Python **>= 3.10**，承载 `mcp>=2.2,<3`。
+- `store-mcp-node` **0.4.4**（npm）—— Node **>= 18**，承载 `@modelcontextprotocol/sdk`（`^1.31.0`）。
+- `store-mcp-py` **0.4.4**（PyPI）—— Python **>= 3.10**，承载 `mcp>=2.2,<3`。
 - 两者都支持 **stdio** 与 **streamable HTTP**，并暴露完全相同的工具面。
 
 中文（本页） · English: [README.en.md](./README.en.md)
@@ -86,13 +86,26 @@ schema 早就知道这一切。它知道模型名、`idField`、可计算列、�
 
 每次数据工具调用都经过 core 的四道判定——语法、档位、权限、硬限——因为它就是其他皮肤发出的同一次调用。适配器从不放大权限，只对结果分类：
 
-| 状态 | 线上响应 | code |
-|---|---|---|
-| **成功** | `content[0].text` 是 JSON 载荷；不存在 error 键 | — |
-| **未命中** | `isError: true`，message 形如 `User u1 not found` | `notFound` |
-| **被拒绝** | `isError: true`；宿主权限异常文本原样透传 | `permissionDenied` |
+| 状态 | 线上响应 | code | detailCode |
+|---|---|---|---|
+| **成功** | `content[0].text` 是 JSON 载荷；不存在 error 键 | — | — |
+| **未命中** | `isError: true`，message 形如 `User u1 not found` | `notFound` | — |
+| **被拒绝** | `isError: true`；宿主权限异常文本原样透传 | `permissionDenied` | — |
 
 这三种状态刻意分开：行不存在既不是「成功但返回空对象」，也不是崩溃；权限失败保留原始措辞，不重包装成泛泛的 forbidden。三种状态之后还有一条固定判定链：`ProfileViolation` 变成 `profileBlocked`；缺必填上下文变成 `noContext`；参数是数组、标量或空串变成 `invalidParam` 或 `invalidBody`；`ask` 重试耗尽变成 `askExhausted`；其余变成 `planError`。
+
+**`detailCode`（0.4.4 起）**：凡是落进 `planError` 兜底桶的错误，不再只有「计划错误」一个笼统结论——
+具体语义放在 `detailCode`，`code` 保持旧值不变，按 `planError` 分支的客户端无需改动：
+
+| 到达形式 | `code`（不变） | `detailCode` |
+|---|---|---|
+| `contextProvider` 抛非权限异常 | `planError` | `unauthenticated` |
+| 异常带 `type` / `event_type = "profile_blocked"` | `planError` | `profileBlocked` |
+| `ERR_PERMISSION:` 前缀 | `planError` | `permissionDenied` |
+| `ERR_NO_CONTEXT:` 前缀 | `planError` | `noContext` |
+| `ERR_NOT_FOUND:` / `ERR_RESOURCE_NOT_FOUND:` / `NOT_FOUND` 前缀 | `planError` | `not_found` |
+
+0.4.4 采用**单线发布**：`release/0.4.x` 维护分支已合回主干并删除，因为本轮没有破坏性变更，双线不再需要。
 
 core 的稳定前缀——`ERR_GQL_PARSE:`、`ERR_TEXT2QUERY:`、`ERR_LIMIT:`——原样保留在 `message` 里，绝不摘要或剥离。判定按异常名或机器码，而不是 `instanceof`，所以跨包边界依然正确。
 
